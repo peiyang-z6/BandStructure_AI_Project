@@ -1,0 +1,30 @@
+# Core runtime
+tensorflow>=2.12.0
+keras>=3.0.0
+numpy>=1.24.0,<2.0.0
+h5py>=3.9.0
+scipy>=1.10.0
+scikit-learn>=1.3.0
+
+# GUI (native tkinter — built into Python, no extra install needed)
+# PIL/Pillow: already installed via tensorflow dependency
+
+# Materials Project / pymatgen
+mp-api>=0.43.0
+emmet-core>=0.83.0,<0.84.0
+pymatgen>=2024.4.0
+
+# Reporting
+matplotlib>=3.7.0
+
+# Optional hyperparameter tuning
+optuna>=3.6.0
+
+# Optional Phase 5 plot-to-physics extension
+opencv-python>=4.8.0
+
+# Optional Phase 5 detector training
+ultralytics>=8.0.0
+
+# Optional Phase 5 PDF extraction
+PyMuPDF>=1.23.0

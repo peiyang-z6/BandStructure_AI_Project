@@ -1,0 +1,55 @@
+# ============================================================
+# BandStructure AI Project — .gitignore
+# ============================================================
+
+# ── Sensitive files ──
+configs/api_keys.env
+
+# ── Large data files ──
+data_cache/*.h5
+data_cache/*.npz
+data_cache/*.json
+data_cache/json_cache/
+data_cache/ood_tensors/
+data_cache/yolo_human_train/
+data_cache/human_annotations/*.json
+data_cache/human_annotations/*.jsonl
+
+# ── Trained model artifacts (large) ──
+models/*.keras
+models/*.h5
+models/*.pt
+models/*.json
+models/vision_detector/
+
+# ── Checkpoints ──
+checkpoints/
+
+# ── TensorBoard logs ──
+logs/
+
+# ── Generated reports ──
+reports/
+!reports/.gitkeep
+
+# ── Gradio artifacts ──
+.gradio/
+
+# ── Python cache ──
+__pycache__/
+*.pyc
+*.pyo
+
+# ── Conda / venv ──
+.env
+*.egg-info/
+
+# ── IDE ──
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── OS ──
+.DS_Store
+Thumbs.db
