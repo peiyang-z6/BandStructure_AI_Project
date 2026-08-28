@@ -834,12 +834,18 @@ class Stage0RobustnessTest(unittest.TestCase):
         class NoFitModel:
             def __init__(self):
                 self.loaded = None
+                self.compile_kwargs = None
 
             def fit(self, *args, **kwargs):
                 raise AssertionError("fit must not run during evaluation-only resume")
 
             def load_weights(self, path):
                 self.loaded = path
+
+            def compile(self, **kwargs):
+                if self.loaded is None:
+                    raise AssertionError("evaluation compile must happen after best restore")
+                self.compile_kwargs = kwargs
 
         with tempfile.TemporaryDirectory() as tmp:
             checkpoint = Path(tmp) / "best.weights.h5"
@@ -864,6 +870,8 @@ class Stage0RobustnessTest(unittest.TestCase):
 
             self.assertEqual(model.loaded, str(checkpoint))
             self.assertEqual(history.history["loss"], [1.0])
+            self.assertIsNotNone(model.compile_kwargs)
+            self.assertFalse(model.compile_kwargs["jit_compile"])
 
     def test_finetune_dataset_fit_explicitly_disables_keras_shuffle(self):
         from scripts.finetune_supervised import fit_or_restore_history

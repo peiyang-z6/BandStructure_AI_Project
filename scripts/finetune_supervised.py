@@ -1655,12 +1655,14 @@ def fit_or_restore_history(
     selection_manifest: Dict[str, object] | None = None,
 ) -> keras.callbacks.History:
     if evaluation_only:
-        return restore_model_for_evaluation(
+        history = restore_model_for_evaluation(
             model,
             checkpoint_path,
             history_csv_path,
             selection_manifest=selection_manifest,
         )
+        model.compile(jit_compile=False)
+        return history
     return model.fit(
         train_ds,
         validation_data=val_ds,

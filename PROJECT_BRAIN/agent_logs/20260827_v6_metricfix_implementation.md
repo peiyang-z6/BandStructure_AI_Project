@@ -81,9 +81,9 @@ User approved the revised complete plan with these decisions:
 
 ## Local verification completed
 
-- Final Stage-0: `116 passed in 29.22s`.
+- Final Stage-0: `116 passed in 27.64s`.
 - Final local compileall: exit 0.
-- Final local full pytest: `134 passed in 225.64s`.
+- Final local full pytest: `134 passed in 227.52s`.
 - Immutable v4/v5 raw/tensor/model/prediction SHA-256 values all matched frozen baselines.
 - Real `run_full_pipeline.py --source aflow --status-only` no-write probe preserved v4 manifest SHA `91a7b2...a32c`.
 - Local supervised 1-epoch GPU smoke on RTX 4060:
@@ -129,6 +129,15 @@ The first independent logic review returned `passed=false`. Every reported/repro
 10. Corrected remaining report labels and made curvature zoom segment-aware.
 
 Delegation-provider retries failed to return a parseable second verdict due provider/network failures. A separate local Codex CLI read-only review of the **current working tree** independently marked these nine core gates verified: explicit input containment, immutable cleanup, distinct supervised states, manifest hash/size validation, manifest-bound evaluation, one-based supervised best epoch, SSL best epoch before checkpoint save, nonempty regular files, and content gate before manifest publication. Its only warning was missing programmatic source allowlisting; that warning was then fixed through RED→GREEN. Codex could not run tests in its pyenv, so WSL project tests remain the execution authority.
+
+## Remote synchronization and V100 smoke corrective action
+
+- Applied core archive tag `v6-metricfix-sync-20260828`, commit `7cbd3541ee6fc797097660aea029d2ad45221dd3`.
+- Archive SHA-256 `62c8422fd4ba633a3c59bd60956abc19ac6cb74f6056fca1998dcd15b4b7e684`; 127 file hashes verified before and after apply; secrets excluded; v5 artifacts not overwritten.
+- Historical server cleanup had removed retained v4 assets and `pymatgen/mp-api`; restored 39 v4 files (mismatch=0), installed project-declared `pymatgen`/`mp-api` with `numpy<2`, `pip check` clean, Conv1D `/GPU:0` finite, MP tests 4/4, full remote pytest 134/134.
+- Remote v4/v5 hashes matched local frozen values after restoration.
+- First V100 smoke: SSL 1 epoch and supervised train-only 1 epoch passed, but evaluation-only failed at Conv1D inference because the newly uncompiled evaluation model allowed Keras/XLA auto-JIT; V100 cuDNN autotuner could not select a supported `convBiasActivationForward` config.
+- Root-cause TDD fix: evaluation now restores frozen best **before** `model.compile(jit_compile=False)`. This avoids both optimizer-state restore warnings and XLA inference autotuning. Local Stage-0/full tests passed after the change; corrected source must be resynchronized before rerunning remote smoke.
 
 ## Pending gates
 

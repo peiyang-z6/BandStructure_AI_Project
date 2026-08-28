@@ -1,0 +1,16 @@
+{
+  "status": "completed",
+  "file_count": 39,
+  "mismatches": [],
+  "test_tail": [
+    "........................................................................ [ 53%]",
+    "..............................................................           [100%]",
+    "134 passed in 37.57s"
+  ],
+  "hashes": [
+    "bb261f1e3b3f602e3463ca32831e15b67f53bd5f9f2d951614ec1441b8c0b62d  data/raw/aflow/aflow_bands.h5",
+    "d9927f0425de6232a24b8cea2eb8d0c5820e0aa9e29222b7feb621ebc7be08f3  data/raw/aflow/snapshots/aflow_30000_20260825/aflow_bands.h5",
+    "c99d21647489bec3c4a20cafd209ef136b83da966af67e0594f4dc5d0aa5b7a5  data/processed/aflow/ood_tensors_v5_30000_seed42/band_tensors_ood_split.npz"
+  ],
+  "cleanup_exit": 0
+}
