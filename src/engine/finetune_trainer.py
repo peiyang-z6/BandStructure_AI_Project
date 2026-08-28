@@ -47,7 +47,7 @@ def freeze_encoder_layers(ssl_encoder: keras.Model, freeze_layers: int) -> Dict[
         "trainable_heads": ["extremum_expected_gap_head", "type_head"],
         "learning_rate_policy": {
             "encoder_backbone": "low effective LR / frozen early layers",
-            "predictor_heads": "main optimizer LR with ReduceLROnPlateau",
+            "predictor_heads": "main optimizer LR with warmup + cosine decay",
         },
     }
 
@@ -69,7 +69,7 @@ def write_finetune_strategy_report(
         "optimizer_strategy": {
             "head_learning_rate": learning_rate,
             "encoder_effective_learning_rate": encoder_learning_rate,
-            "schedule": "ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=10)",
+            "schedule": "linear warmup followed by cosine decay",
             "note": (
                 "Early SSL blocks are frozen. Later encoder blocks receive gradient-scaled "
                 "updates while randomly initialized predictor heads use the larger optimizer LR."

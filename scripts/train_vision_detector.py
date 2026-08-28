@@ -90,10 +90,10 @@ def train_and_validate(args: argparse.Namespace) -> Dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train YOLO pose detector for band plot panels and extrema")
-    parser.add_argument("--h5", default="data_cache/mp_bands.h5")
-    parser.add_argument("--synthetic-dir", default="data_cache/vision_synthetic_train")
-    parser.add_argument("--model-dir", default="models/vision_detector")
-    parser.add_argument("--runs-dir", default="runs/vision_detector")
+    parser.add_argument("--h5", default="data/raw/materials_project/mp_bands.h5")
+    parser.add_argument("--synthetic-dir", default="data/processed/vision/synthetic_train")
+    parser.add_argument("--model-dir", default="artifacts/models/vision_detector")
+    parser.add_argument("--runs-dir", default="artifacts/logs/vision_detector")
     parser.add_argument("--count", type=int, default=5000)
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch", type=int, default=8)

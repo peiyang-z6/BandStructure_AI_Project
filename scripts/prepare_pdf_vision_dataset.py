@@ -223,8 +223,8 @@ kpt_shape: [2, 3]
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Prepare rendered-PDF YOLO pose fine-tuning dataset")
     parser.add_argument("--pdf", action="append", required=True, help="PDF file path. Repeat for multiple PDFs.")
-    parser.add_argument("--output-dir", default="data_cache/vision_pdf_finetune")
-    parser.add_argument("--detector", default="models/vision_detector/band_plot_yolov8_pose_best.pt")
+    parser.add_argument("--output-dir", default="data/processed/vision/pdf_finetune")
+    parser.add_argument("--detector", default="artifacts/models/vision_detector/band_plot_yolov8_pose_best.pt")
     parser.add_argument("--detector-conf", type=float, default=0.06)
     parser.add_argument("--min-candidate-score", type=float, default=0.72)
     parser.add_argument("--dpi", type=int, default=135)

@@ -55,7 +55,7 @@ class MultiFormatParser:
         target_k_points: int = 128,
         max_video_frames: int = 48,
         threshold: int = 190,
-        detector_path: Optional[str] = "models/vision_detector/band_plot_yolov8_pose_best.pt",
+        detector_path: Optional[str] = "artifacts/models/vision_detector/band_plot_yolov8_pose_best.pt",
         detector_conf: float = 0.05,
     ) -> None:
         self.image_height_ev = float(image_height_ev)

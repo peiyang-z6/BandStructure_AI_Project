@@ -109,6 +109,7 @@ class PhysicsReconstructor:
         cbm_pixel: Dict[str, float],
         valence_points: List[Dict[str, float]],
         conduction_points: List[Dict[str, float]],
+        fermi_y_pixel: float | None = None,
         metadata: Dict[str, Any] | None = None,
     ) -> ReconstructedTensor:
         """Build the 6D tensor from human-calibrated GUI points.
@@ -131,13 +132,26 @@ class PhysicsReconstructor:
 
         y0, y1 = y_calibration[0], y_calibration[1]
         x0, x1 = x_calibration[0], x_calibration[1]
-        y_scale = (float(y1["value"]) - float(y0["value"])) / max(float(y1["y"]) - float(y0["y"]), 1.0e-6)
-        x_scale = (float(x1["value"]) - float(x0["value"])) / max(float(x1["x"]) - float(x0["x"]), 1.0e-6)
-        fermi_y_pixel = float(y0["y"]) + (0.0 - float(y0["value"])) / y_scale
+        delta_y_pixel = float(y1["y"]) - float(y0["y"])
+        delta_x_pixel = float(x1["x"]) - float(x0["x"])
+        delta_y_value = float(y1["value"]) - float(y0["value"])
+        delta_x_value = float(x1["value"]) - float(x0["value"])
+        if abs(delta_y_pixel) < 1.0e-6 or abs(delta_y_value) < 1.0e-12:
+            raise ValueError("Y-axis calibration points and energy values must be distinct")
+        if abs(delta_x_pixel) < 1.0e-6 or abs(delta_x_value) < 1.0e-12:
+            raise ValueError("X-axis calibration points and k values must be distinct")
+        y_scale = delta_y_value / delta_y_pixel
+        x_scale = delta_x_value / delta_x_pixel
+        if fermi_y_pixel is None:
+            fermi_y_pixel = float(y0["y"]) + (0.0 - float(y0["value"])) / y_scale
+        raw_fermi_energy = float(y0["value"]) + (
+            float(fermi_y_pixel) - float(y0["y"])
+        ) * y_scale
 
         def pixel_to_physics(point: Dict[str, float]) -> tuple[float, float]:
             k = float(x0["value"]) + (float(point["x"]) - float(x0["x"])) * x_scale
-            energy = float(y0["value"]) + (float(point["y"]) - float(y0["y"])) * y_scale
+            raw_energy = float(y0["value"]) + (float(point["y"]) - float(y0["y"])) * y_scale
+            energy = raw_energy - raw_fermi_energy
             return float(np.clip(k, 0.0, 1.0)), float(energy)
 
         vbm_k, vbm_e = pixel_to_physics(vbm_pixel)
@@ -176,6 +190,8 @@ class PhysicsReconstructor:
                 "source_type": "manual_gui_calibration",
                 "panel_bbox": panel_bbox,
                 "fermi_y_pixel": float(fermi_y_pixel),
+                "raw_fermi_energy_ev": float(raw_fermi_energy),
+                "energy_reference": "Fermi level shifted to 0 eV",
                 "x_scale": float(x_scale),
                 "y_scale_ev_per_pixel": float(y_scale),
                 "vbm_k": float(k_axis[vbm_idx]),

@@ -6,7 +6,7 @@ Uses the MBM-pretrained SSLEncoder on OOD tensors to predict:
 - gap type (metal/direct/indirect classification)
 
 Input tensor source:
-    data_cache/ood_tensors/band_tensors_ood_split.npz
+    data/processed/materials_project/ood_tensors/band_tensors_ood_split.npz
 
 The script preserves the existing OOD split. It does not create any random
 sample-wise split.
@@ -14,11 +14,13 @@ sample-wise split.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import math
 import os
 import shutil
 import sys
+from datetime import datetime
 from typing import Dict, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -31,7 +33,7 @@ from tensorflow.keras import layers
 from sklearn.manifold import TSNE
 from sklearn.metrics import auc, confusion_matrix, f1_score, recall_score, roc_curve
 
-import src.models.band_structure_encoder  # Registers custom Keras classes.
+from src.models import load_ssl_encoder
 from src.engine.finetune_trainer import (
     freeze_encoder_layers as apply_freeze_encoder_layers,
     write_finetune_strategy_report,
@@ -40,6 +42,24 @@ from src.utils.physics_validator import PhysicsValidator
 from src.utils.mc_dropout import mc_dropout_predict_with_type, mc_calibration_check
 from src.utils.visualizer import save_band_overlay_grid
 from src.data.band_structure_dataset import VirtualStrainAugmentation
+from src.data.ood_tensor_builder import build_group_validation_split
+
+
+def configure_tensorflow_runtime(require_gpu: bool = False):
+    """Configure TensorFlow and fail before training when GPU is mandatory."""
+    print("TensorFlow:", tf.__version__)
+    print("CUDA build:", tf.test.is_built_with_cuda())
+    print("Build info:", dict(tf.sysconfig.get_build_info()))
+    gpus = tf.config.list_physical_devices("GPU")
+    print("Physical GPUs:", gpus)
+    for gpu in gpus:
+        try:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        except Exception as exc:
+            print(f"[WARN] Could not set memory growth for {gpu}: {exc}")
+    if require_gpu and not gpus:
+        raise RuntimeError("No TensorFlow GPU device is available for supervised training")
+    return gpus
 
 
 def _local_curvature(band: np.ndarray) -> np.ndarray:
@@ -109,6 +129,17 @@ def load_dataset(npz_path: str, norm_path: str) -> Dict[str, np.ndarray]:
     y_train = data["y_train"].astype(np.float32)
     y_test = data["y_test"].astype(np.float32)
 
+    if "y_type_train" in data and "y_type_test" in data:
+        type_train = data["y_type_train"].astype(np.int32)
+        type_test = data["y_type_test"].astype(np.int32)
+    else:
+        print(
+            "[WARN] Dataset has no provider gap-type labels; deriving labels from "
+            "resampled extrema. Do not treat this fallback as independent type evaluation."
+        )
+        type_train = infer_gap_type_labels(X_train_raw, y_train)
+        type_test = infer_gap_type_labels(X_test_raw, y_test)
+
     return {
         "X_train_raw": X_train_raw,
         "X_test_raw": X_test_raw,
@@ -118,8 +149,8 @@ def load_dataset(npz_path: str, norm_path: str) -> Dict[str, np.ndarray]:
         "feature_std": std.reshape(-1).astype(np.float32),
         "y_train": y_train,
         "y_test": y_test,
-        "type_train": infer_gap_type_labels(X_train_raw, y_train),
-        "type_test": infer_gap_type_labels(X_test_raw, y_test),
+        "type_train": type_train,
+        "type_test": type_test,
         "tensor_gap_train": tensor_gap_from_extrema(X_train_raw),
         "tensor_gap_test": tensor_gap_from_extrema(X_test_raw),
         "groups_train": data["groups_train"].astype(np.int32),
@@ -201,9 +232,11 @@ class ExtremumExpectedGapHead(layers.Layer):
         feature_std: np.ndarray,
         hidden_dim: int = 64,
         dropout: float = 0.1,
+        metal_anchor_gate_enabled: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
+        self.metal_anchor_gate_enabled = bool(metal_anchor_gate_enabled)
         self.feature_mean = tf.constant(np.asarray(feature_mean, dtype=np.float32), dtype=tf.float32)
         self.feature_std = tf.constant(np.asarray(feature_std, dtype=np.float32), dtype=tf.float32)
         self.temperature_raw = self.add_weight(
@@ -215,6 +248,9 @@ class ExtremumExpectedGapHead(layers.Layer):
         self.local_conv = layers.Conv1D(hidden_dim, kernel_size=3, padding="same", activation="gelu")
         self.dropout = layers.Dropout(dropout)
         self.logit_layer = layers.Conv1D(2, kernel_size=1, padding="same", name="extremum_logits")
+        # Metal tensors are explicitly Fermi-anchored by the data pipeline, so
+        # |min(CBM)-max(VBM)|≈0 is an exact physical signature, not a learned label.
+        self.metal_anchor_tolerance_ev = 1.0e-4
 
     def call(self, encoded, x_norm, training=False):
         local_features = tf.concat([encoded, x_norm], axis=-1)
@@ -246,7 +282,20 @@ class ExtremumExpectedGapHead(layers.Layer):
         kl_cv = tf.reduce_sum(cbm_prob * (tf.math.log(cbm_prob + 1e-8) - tf.math.log(vbm_prob + 1e-8)), axis=1)
         topo_features = tf.stack([k_distance, overlap, 0.5 * (kl_vc + kl_cv)], axis=-1)
         probs = tf.stack([vbm_prob, cbm_prob], axis=-1)
-        return tf.expand_dims(expected_cbm - expected_vbm, axis=-1), topo_features, probs
+
+        raw_gap = expected_cbm - expected_vbm
+        # Enforce the explicit metal signature carried by the input tensor.
+        # This removes rare but catastrophic 7–16 eV predictions for tensors
+        # whose true Fermi-anchored gap is exactly zero, without touching normal
+        # semiconductor samples.
+        input_tensor_gap = tf.reduce_min(cbm_energy_ev, axis=1) - tf.reduce_max(vbm_energy_ev, axis=1)
+        anchored_metal = tf.abs(input_tensor_gap) <= self.metal_anchor_tolerance_ev
+        constrained_gap = (
+            tf.where(anchored_metal, tf.zeros_like(raw_gap), raw_gap)
+            if self.metal_anchor_gate_enabled
+            else raw_gap
+        )
+        return tf.expand_dims(constrained_gap, axis=-1), topo_features, probs
 
 
 class SupervisedBandGapModel(keras.Model):
@@ -257,6 +306,7 @@ class SupervisedBandGapModel(keras.Model):
         feature_std: np.ndarray,
         d_model: int = 128,
         dropout: float = 0.1,
+        metal_anchor_gate_enabled: bool = False,
     ):
         super().__init__()
         self.encoder = encoder
@@ -265,6 +315,7 @@ class SupervisedBandGapModel(keras.Model):
             feature_std=feature_std,
             hidden_dim=max(32, d_model // 2),
             dropout=dropout,
+            metal_anchor_gate_enabled=metal_anchor_gate_enabled,
             name="gap_head",
         )
         self.type_head = keras.Sequential(
@@ -279,7 +330,8 @@ class SupervisedBandGapModel(keras.Model):
         self.topology_weight = 0.3
         self.entropy_weight = 0.01
         self.extremum_weight = 0.5
-        self.topology_rule_weight = 0.7
+        self.topology_rule_weight = 0.3
+        self.topology_metal_gap_ev = 0.2
         self.encoder_gradient_scale = 0.1
         self.topology_margin = 0.10
         self.gap_loss_fn = keras.losses.MeanSquaredError()
@@ -296,11 +348,23 @@ class SupervisedBandGapModel(keras.Model):
         vbm_zero_idx = tf.argmin(tf.abs(vbm_k_dist), axis=1, output_type=tf.int32)
         cbm_zero_idx = tf.argmin(tf.abs(cbm_k_dist), axis=1, output_type=tf.int32)
         direct_rule = tf.cast(tf.abs(vbm_zero_idx - cbm_zero_idx) <= 1, tf.float32)
+        # metal prior: when the predicted line-mode gap is ~0, allow the metal
+        # class instead of hard-zeroing it (root cause of metal recall = 0).
+        # metal requires BOTH a near-zero predicted gap AND VBM/CBM k-locations
+        # coinciding (a metal's band crosses E_F at a single k region). This dual
+        # condition stops indirect-gap samples with small predicted gaps from being
+        # misclassified as metal (which hurted indirect recall).
+        gap_small = tf.reshape(
+            tf.cast(gap < self.topology_metal_gap_ev, tf.float32),
+            tf.shape(direct_rule),
+        )
+        metal_rule = gap_small * direct_rule
+        semiconductor = 1.0 - metal_rule
         topology_type = tf.stack(
             [
-                tf.zeros_like(direct_rule),
-                0.02 + 0.96 * direct_rule,
-                0.98 - 0.96 * direct_rule,
+                0.90 * metal_rule,
+                semiconductor * (0.02 + 0.96 * direct_rule),
+                semiconductor * (0.98 - 0.96 * direct_rule),
             ],
             axis=-1,
         )
@@ -461,6 +525,11 @@ def save_supervised_model_artifacts(model: keras.Model, model_path: str, config:
     return outputs
 
 
+def supervised_report_path(output_dir: str, report_date: str | None = None) -> str:
+    date_token = report_date or datetime.now().strftime("%Y%m%d")
+    return os.path.join(output_dir, f"finetune_supervised_report_{date_token}.md")
+
+
 def clean_finetune_artifacts(output_dir: str, checkpoint_dir: str, model_path: str) -> None:
     for path in [output_dir, checkpoint_dir]:
         if os.path.isdir(path):
@@ -468,7 +537,6 @@ def clean_finetune_artifacts(output_dir: str, checkpoint_dir: str, model_path: s
     for path in [
         model_path,
         model_path.replace(".weights.h5", "_config.json"),
-        os.path.join(os.path.dirname(output_dir), "finetune_supervised_report_20260604.md"),
     ]:
         if path and os.path.exists(path):
             os.remove(path)
@@ -492,6 +560,7 @@ def compile_model(
     model.encoder_gradient_scale = float(encoder_learning_rate / max(learning_rate, 1e-12))
     model.compile(
         optimizer=keras.optimizers.Adam(learning_rate=learning_rate),
+        jit_compile=False,
     )
 
 
@@ -508,8 +577,8 @@ class WarmupCosineDecay(keras.callbacks.Callback):
     """Warmup learning rate linearly from 0 to `target_lr` over `warmup_epochs`,
     then cosine-decay to `min_lr` over the remaining epochs.
 
-    Placed *before* ReduceLROnPlateau in the callback list so that ROP acts as a
-    further safety-net reduction on top of the scheduled decay.
+    This is the sole learning-rate controller. Combining it with
+    ReduceLROnPlateau would cause the next epoch to overwrite plateau changes.
     """
 
     def __init__(
@@ -902,11 +971,28 @@ def save_curvature_zoom_examples(
     plt.close(fig)
 
 
+def extract_encoder_features_batched(
+    model: keras.Model,
+    X: np.ndarray,
+    batch_size: int = 128,
+) -> np.ndarray:
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    features = []
+    for start in range(0, len(X), batch_size):
+        batch = tf.convert_to_tensor(X[start : start + batch_size], dtype=tf.float32)
+        encoded = model.encoder(batch, return_features=True, training=False)
+        features.append(np.asarray(encoded))
+    if not features:
+        return np.empty((0, 0), dtype=np.float32)
+    return np.concatenate(features, axis=0)
+
+
 def save_latent_tsne(model: keras.Model, data: Dict[str, np.ndarray], output_path: str) -> None:
     X = np.concatenate([data["X_train"], data["X_test"]], axis=0)
     groups = np.concatenate([data["groups_train"], data["groups_test"]], axis=0)
     split = np.asarray(["train"] * len(data["X_train"]) + ["ood_test"] * len(data["X_test"]))
-    features = model.encoder(tf.constant(X, dtype=tf.float32), return_features=True, training=False).numpy()
+    features = extract_encoder_features_batched(model, X)
     perplexity = max(2, min(30, max(2, len(features) // 4), len(features) - 1))
     emb = TSNE(n_components=2, perplexity=perplexity, init="pca", learning_rate="auto", random_state=42).fit_transform(features)
 
@@ -1005,7 +1091,7 @@ def save_markdown_report(summary: Dict, output_path: str) -> None:
 
 ## Scope
 
-- Input tensor: `data_cache/ood_tensors/band_tensors_ood_split.npz`
+- Input tensor: `data/processed/materials_project/ood_tensors/band_tensors_ood_split.npz`
 - Tensor contract: `(N, 2, 128, 3)` -> `(N, 128, 6)`
 - Features: `[VBM_E, VBM_curv, VBM_k_dist, CBM_E, CBM_curv, CBM_k_dist]`
 - OOD split: grouped by `spacegroup_number`, no random sample-wise split.
@@ -1053,23 +1139,71 @@ def save_markdown_report(summary: Dict, output_path: str) -> None:
 
 ## Outputs
 
-- Metrics: `reports/finetune_supervised/metrics_summary.json`
-- Predictions: `reports/finetune_supervised/ood_test_predictions.json`
-- Figures: `reports/finetune_supervised/*.png`
-- Model weights: `models/finetuned_gap_predictor.weights.h5`
+- Metrics: `artifacts/reports/mp/finetune_supervised/metrics_summary.json`
+- Predictions: `artifacts/reports/mp/finetune_supervised/ood_test_predictions.json`
+- Figures: `artifacts/reports/mp/finetune_supervised/*.png`
+- Model weights: `artifacts/models/mp/finetuned_gap_predictor.weights.h5`
 """
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(body)
 
 
+def restore_model_for_evaluation(
+    model: keras.Model,
+    checkpoint_path: str,
+    history_csv_path: str,
+) -> keras.callbacks.History:
+    for path in (checkpoint_path, history_csv_path):
+        if not os.path.isfile(path):
+            raise FileNotFoundError(path)
+
+    with open(history_csv_path, newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    if not rows:
+        raise ValueError(f"empty training history: {history_csv_path}")
+
+    history_values: Dict[str, list[float]] = {}
+    for key in rows[0]:
+        if key == "epoch":
+            continue
+        history_values[key] = [float(row[key]) for row in rows]
+
+    history = keras.callbacks.History()
+    history.epoch = [int(row["epoch"]) for row in rows]
+    history.history = history_values
+    model.load_weights(checkpoint_path)
+    return history
+
+
+def fit_or_restore_history(
+    model: keras.Model,
+    evaluation_only: bool,
+    checkpoint_path: str,
+    history_csv_path: str,
+    train_ds,
+    val_ds,
+    epochs: int,
+    callbacks,
+) -> keras.callbacks.History:
+    if evaluation_only:
+        return restore_model_for_evaluation(model, checkpoint_path, history_csv_path)
+    return model.fit(
+        train_ds,
+        validation_data=val_ds,
+        epochs=epochs,
+        callbacks=callbacks,
+        verbose=2,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fine-tune SSL encoder for gap prediction")
-    parser.add_argument("--tensor-npz", default="./data_cache/ood_tensors/band_tensors_ood_split.npz")
-    parser.add_argument("--encoder", default="./models/ssl_mbm_pretrained.keras")
-    parser.add_argument("--norm", default="./models/ssl_mbm_norm_stats.json")
-    parser.add_argument("--output-dir", default="./reports/finetune_supervised")
-    parser.add_argument("--checkpoint-dir", default="./checkpoints/finetune_supervised")
-    parser.add_argument("--model-path", default="./models/finetuned_gap_predictor.weights.h5")
+    parser.add_argument("--tensor-npz", default="./data/processed/materials_project/ood_tensors/band_tensors_ood_split.npz")
+    parser.add_argument("--encoder", default="./artifacts/models/mp/ssl_mbm_pretrained.keras")
+    parser.add_argument("--norm", default="./artifacts/models/mp/ssl_mbm_norm_stats.json")
+    parser.add_argument("--output-dir", default="./artifacts/reports/mp/finetune_supervised")
+    parser.add_argument("--checkpoint-dir", default="./artifacts/checkpoints/mp/finetune_supervised")
+    parser.add_argument("--model-path", default="./artifacts/models/mp/finetuned_gap_predictor.weights.h5")
     parser.add_argument("--epochs", type=int, default=120)
     parser.add_argument("--warmup-epochs", type=int, default=10, help="linear warmup from 0 to lr over N epochs, then cosine decay")
     parser.add_argument("--min-lr", type=float, default=1e-7, help="floor for cosine decay")
@@ -1082,12 +1216,34 @@ def main() -> None:
     parser.add_argument("--entropy-weight", type=float, default=0.02)
     parser.add_argument("--extremum-weight", type=float, default=1.0)
     parser.add_argument("--random-state", type=int, default=42)
+    parser.add_argument("--validation-size", type=float, default=0.15)
     parser.add_argument("--gap-identity-tolerance", type=float, default=0.5)
+    parser.add_argument(
+        "--report-date",
+        default=None,
+        help="report date token in YYYYMMDD form (default: current local date)",
+    )
+    parser.add_argument(
+        "--require-gpu",
+        action="store_true",
+        help="fail before loading data when no TensorFlow GPU is available",
+    )
+    parser.add_argument(
+        "--enable-metal-anchor-gate",
+        action="store_true",
+        help="legacy only: force zero gap for explicitly Fermi-anchored input tensors",
+    )
+    parser.add_argument(
+        "--evaluation-only",
+        action="store_true",
+        help="skip fit, restore best checkpoint and existing CSV history, then regenerate evaluation artifacts",
+    )
     parser.add_argument("--fresh", action="store_true", help="remove old fine-tuning artifacts before training")
     parser.add_argument("--augment", action="store_true", default=True, help="apply virtual strain augmentation to training data")
     parser.add_argument("--strain-scale", type=float, default=0.01, help="virtual strain magnitude (default: 0.01)")
     args = parser.parse_args()
 
+    configure_tensorflow_runtime(require_gpu=args.require_gpu)
     tf.keras.utils.set_random_seed(args.random_state)
     if args.fresh:
         clean_finetune_artifacts(args.output_dir, args.checkpoint_dir, args.model_path)
@@ -1115,24 +1271,42 @@ def main() -> None:
         print(f"     Re-run `python -m src.data.ood_tensor_builder` with --random-state to try another split,")
         print(f"     or increase the dataset size so all classes appear in the test split.")
 
-    class_weights = compute_class_weights(data["type_train"])
+    fit_idx, val_idx = build_group_validation_split(
+        data["groups_train"],
+        validation_size=args.validation_size,
+        random_state=args.random_state,
+        class_labels=data["type_train"],
+    )
+    inner_overlap = set(data["groups_train"][fit_idx].tolist()).intersection(
+        set(data["groups_train"][val_idx].tolist())
+    )
+    print(
+        f"  inner train/val: {len(fit_idx)}/{len(val_idx)}, "
+        f"group overlap={inner_overlap}; outer OOD test is evaluation-only"
+    )
+
+    class_weights = compute_class_weights(data["type_train"][fit_idx])
     print(f"  class weights: {class_weights}")
 
     train_ds = make_tf_dataset(
-        data["X_train"],
-        data["tensor_gap_train"],
-        data["type_train"],
+        data["X_train"][fit_idx],
+        data["tensor_gap_train"][fit_idx],
+        data["type_train"][fit_idx],
         args.batch_size,
         shuffle=True,
         class_weights=class_weights,
         augment=args.augment,
         strain_scale=args.strain_scale,
     )
-    test_ds = make_tf_dataset(
-        data["X_test"], data["tensor_gap_test"], data["type_test"], args.batch_size, shuffle=False
+    val_ds = make_tf_dataset(
+        data["X_train"][val_idx],
+        data["tensor_gap_train"][val_idx],
+        data["type_train"][val_idx],
+        args.batch_size,
+        shuffle=False,
     )
 
-    ssl_encoder = tf.keras.models.load_model(args.encoder, compile=False)
+    ssl_encoder = load_ssl_encoder(args.encoder, compile=False)
     freeze_info = apply_freeze_encoder_layers(ssl_encoder, args.freeze_layers)
     print(f"Frozen first {freeze_info['freeze_layers']}/{freeze_info['total_transformer_layers']} transformer layers")
 
@@ -1140,6 +1314,7 @@ def main() -> None:
         ssl_encoder,
         feature_mean=data["feature_mean"],
         feature_std=data["feature_std"],
+        metal_anchor_gate_enabled=args.enable_metal_anchor_gate,
     )
     model(tf.zeros([1, data["X_train"].shape[1], data["X_train"].shape[2]], dtype=tf.float32))
     compile_model(
@@ -1173,24 +1348,25 @@ def main() -> None:
             patience=20,
             restore_best_weights=True,
         ),
-        keras.callbacks.ReduceLROnPlateau(
-            monitor="val_loss",
-            factor=0.5,
-            patience=10,
-            min_lr=1e-7,
-            verbose=1,
-        ),
         LearningRateLogger(),
         keras.callbacks.CSVLogger(os.path.join(args.output_dir, "training_log.csv")),
     ]
 
-    history = model.fit(
-        train_ds,
-        validation_data=test_ds,
+    history = fit_or_restore_history(
+        model=model,
+        evaluation_only=args.evaluation_only,
+        checkpoint_path=os.path.join(args.checkpoint_dir, "best.weights.h5"),
+        history_csv_path=os.path.join(args.output_dir, "training_log.csv"),
+        train_ds=train_ds,
+        val_ds=val_ds,
         epochs=args.epochs,
         callbacks=callbacks,
-        verbose=2,
     )
+    if args.evaluation_only:
+        print(
+            f"Evaluation-only resume: restored {os.path.join(args.checkpoint_dir, 'best.weights.h5')} "
+            f"with {len(history.epoch)} recorded epochs"
+        )
 
     pred_train = model.predict(data["X_train"], verbose=0)
     pred_test = model.predict(data["X_test"], verbose=0)
@@ -1231,6 +1407,8 @@ def main() -> None:
             "class_weights": class_weights,
             "classification_loss": "CategoricalCrossentropy with class sample weights",
             "regression_target": "tensor_gap_ecbm_minus_evbm",
+            "metal_anchor_gap_gate_enabled": model.gap_head.metal_anchor_gate_enabled,
+            "metal_anchor_gap_gate_tolerance_ev": model.gap_head.metal_anchor_tolerance_ev,
             "energy_scale": "gap head denormalizes VBM_E/CBM_E; gap loss and MAE are reported in eV",
             "heads": {
                 "gap": "Conv1D extremum logits -> learned-temperature softmax -> expected E_CBM - E_VBM in eV",
@@ -1320,13 +1498,22 @@ def main() -> None:
             "gap_identity_mae": test_metrics["tensor_gap_mae"],
             "gap_identity_max_abs": test_metrics["tensor_gap_residual_max_abs"],
             "gap_identity_score": test_metrics["gap_identity_score"],
+            # Supervised output physics is defined only by properties this head
+            # actually predicts: non-negative gap and agreement with the input
+            # tensor gap. The MBM decoder is trained on masked locations only;
+            # its full-sequence reconstruction score is reported separately and
+            # must not dominate the supervised model's physics score.
+            "supervised_physics_score": float(
+                min(
+                    test_metrics["gap_identity_score"],
+                    max(0.0, 1.0 - violation_info["negative_predicted_gap_rate"]),
+                )
+            ),
+            "ssl_reconstruction_physics_score": float(validator_info["physics_score"]),
             "physics_score": float(
                 min(
                     test_metrics["gap_identity_score"],
-                    validator_info["physics_score"],
                     max(0.0, 1.0 - violation_info["negative_predicted_gap_rate"]),
-                    max(0.0, 1.0 - violation_info["vbm_positive_curvature_rate"]),
-                    max(0.0, 1.0 - violation_info["cbm_negative_curvature_rate"]),
                 )
             ),
         }
@@ -1393,7 +1580,9 @@ def main() -> None:
         "train_metrics": train_metrics,
         "ood_test_metrics": test_metrics,
         "epochs_ran": len(history.history["loss"]),
-        "best_val_gap_mae": float(np.min(history.history["val_gap_mae"])),
+        "best_inner_val_gap_mae": float(np.min(history.history["val_gap_mae"])),
+        "model_selection_data": "group-disjoint validation subset of outer training split",
+        "outer_ood_test_usage": "final evaluation only",
         "freeze_layers": args.freeze_layers,
         "type_weight": args.type_weight,
         "learning_rate": args.learning_rate,
@@ -1443,7 +1632,7 @@ def main() -> None:
     }
     with open(os.path.join(args.output_dir, "metrics_summary.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
-    report_path = os.path.join(os.path.dirname(args.output_dir), "finetune_supervised_report_20260604.md")
+    report_path = supervised_report_path(args.output_dir, args.report_date)
     save_markdown_report(summary, report_path)
 
     print("=" * 60)

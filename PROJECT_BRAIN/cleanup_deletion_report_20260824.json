@@ -1,0 +1,497 @@
+{
+  "executed_at": "2026-08-24T22:44:14+0800",
+  "deleted": [
+    {
+      "kind": "server_import_staging",
+      "path": "C:\\Users\\PeiYang\\Documents\\AI Project\\BandStructure AI Project\\BandStructure_AI_Project\\._server_import_20260824",
+      "files": 0,
+      "bytes": 0
+    },
+    {
+      "kind": "pytest_cache",
+      "path": "C:\\Users\\PeiYang\\Documents\\AI Project\\BandStructure AI Project\\BandStructure_AI_Project\\.pytest_cache",
+      "files": 5,
+      "bytes": 4764
+    },
+    {
+      "kind": "python_cache",
+      "path": "C:\\Users\\PeiYang\\Documents\\AI Project\\BandStructure AI Project\\BandStructure_AI_Project\\src\\data\\__pycache__",
+      "files": 14,
+      "bytes": 258783
+    },
+    {
+      "kind": "python_cache",
+      "path": "C:\\Users\\PeiYang\\Documents\\AI Project\\BandStructure AI Project\\BandStructure_AI_Project\\src\\engine\\__pycache__",
+      "files": 8,
+      "bytes": 66196
+    },
+    {
+      "kind": "python_cache",
+      "path": "C:\\Users\\PeiYang\\Documents\\AI Project\\BandStructure AI Project\\BandStructure_AI_Project\\src\\models\\__pycache__",
+      "files": 8,
+      "bytes": 62641
+    },
+    {
+      "kind": "python_cache",
+      "path": "C:\\Users\\PeiYang\\Documents\\AI Project\\BandStructure AI Project\\BandStructure_AI_Project\\src\\utils\\__pycache__",
+      "files": 10,
+      "bytes": 62126
+    },
+    {
+      "kind": "python_cache",
+      "path": "C:\\Users\\PeiYang\\Documents\\AI Project\\BandStructure AI Project\\BandStructure_AI_Project\\src\\vision\\__pycache__",
+      "files": 12,
+      "bytes": 363329
+    },
+    {
+      "kind": "python_cache",
+      "path": "C:\\Users\\PeiYang\\Documents\\AI Project\\BandStructure AI Project\\BandStructure_AI_Project\\scripts\\__pycache__",
+      "files": 28,
+      "bytes": 639534
+    },
+    {
+      "kind": "python_cache",
+      "path": "C:\\Users\\PeiYang\\Documents\\AI Project\\BandStructure AI Project\\BandStructure_AI_Project\\tests\\__pycache__",
+      "files": 13,
+      "bytes": 214409
+    },
+    {
+      "kind": "verified_migration_quarantine",
+      "path": "C:\\Users\\PeiYang\\Documents\\AI Project\\BandStructure AI Project\\._migration_quarantine_20260824",
+      "files": 288,
+      "bytes": 277211900
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\audit_aflow_legacy_unique.py",
+      "files": 1,
+      "bytes": 682
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\audit_energy_reference.py",
+      "files": 1,
+      "bytes": 1351
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\audit_formal_artifacts.py",
+      "files": 1,
+      "bytes": 1182
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\audit_mp_legacy_downloads.py",
+      "files": 1,
+      "bytes": 845
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\audit_only_crossing_patch.py",
+      "files": 1,
+      "bytes": 3205
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\audit_server_data.py",
+      "files": 1,
+      "bytes": 1221
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\build_artifact_provenance.py",
+      "files": 1,
+      "bytes": 2216
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\build_noleak_v2.py",
+      "files": 1,
+      "bytes": 890
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\build_noleak_v3.py",
+      "files": 1,
+      "bytes": 1258
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\build_noleak_v4.py",
+      "files": 1,
+      "bytes": 1217
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\check_formal_ft.py",
+      "files": 1,
+      "bytes": 481
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\check_formal_ssl.py",
+      "files": 1,
+      "bytes": 482
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\check_server_archive_tools.py",
+      "files": 1,
+      "bytes": 316
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\consolidate_aflow_supplemental.py",
+      "files": 1,
+      "bytes": 3023
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\consolidate_raw_band_data.py",
+      "files": 1,
+      "bytes": 5025
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\correct_tensor_relocation_note.py",
+      "files": 1,
+      "bytes": 552
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\derive_formal_training_metrics.py",
+      "files": 1,
+      "bytes": 1172
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\diag_formal_ssl.py",
+      "files": 1,
+      "bytes": 650
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\edge_envelope_patch.py",
+      "files": 1,
+      "bytes": 2460
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\export_server_band_project.py",
+      "files": 1,
+      "bytes": 2236
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\fix_aflow_reference_builder.py",
+      "files": 1,
+      "bytes": 1739
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\fix_brain_artifact_paths.py",
+      "files": 1,
+      "bytes": 678
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\hash_band_data_pre_migration.py",
+      "files": 1,
+      "bytes": 1553
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\inspect_noleak_v2.py",
+      "files": 1,
+      "bytes": 1439
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\inspect_noleak_v3.py",
+      "files": 1,
+      "bytes": 1338
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\inspect_noleak_v4.py",
+      "files": 1,
+      "bytes": 1349
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\inspect_phase_a_manifest.py",
+      "files": 1,
+      "bytes": 1039
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\integrate_server_export.py",
+      "files": 1,
+      "bytes": 2174
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\inventory_band_project.py",
+      "files": 1,
+      "bytes": 2754
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\launch_formal_noleak_ft.py",
+      "files": 1,
+      "bytes": 1405
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\launch_formal_noleak_ssl.py",
+      "files": 1,
+      "bytes": 1361
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\migrate_band_project.py",
+      "files": 1,
+      "bytes": 4487
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\monitor_formal_ft.py",
+      "files": 1,
+      "bytes": 649
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\normalize_pipeline_lf.py",
+      "files": 1,
+      "bytes": 236
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\normalize_two_crlf.py",
+      "files": 1,
+      "bytes": 420
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\phase_a1_patch.py",
+      "files": 1,
+      "bytes": 6558
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\phase_a2_segment_patch.py",
+      "files": 1,
+      "bytes": 3518
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\phase_a2_segment_test.py",
+      "files": 1,
+      "bytes": 1843
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\phase_a2_test.py",
+      "files": 1,
+      "bytes": 1433
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\phase_a3_patch.py",
+      "files": 1,
+      "bytes": 8123
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\phase_a3_test.py",
+      "files": 1,
+      "bytes": 3165
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\probe_energy_reference.py",
+      "files": 1,
+      "bytes": 1365
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\probe_raw_aflow.py",
+      "files": 1,
+      "bytes": 1033
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\relocate_finetuned_config.py",
+      "files": 1,
+      "bytes": 478
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\relocate_metrics_outputs.py",
+      "files": 1,
+      "bytes": 773
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\relocate_tensor_manifest.py",
+      "files": 1,
+      "bytes": 1904
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\resume_phase_a_pull.py",
+      "files": 1,
+      "bytes": 1103
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\run_phase_a_server.py",
+      "files": 1,
+      "bytes": 1034
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\run_phase_a_smoke.py",
+      "files": 1,
+      "bytes": 2188
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\segment_crossing_patch.py",
+      "files": 1,
+      "bytes": 4336
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\segment_crossing_test.py",
+      "files": 1,
+      "bytes": 1371
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\segment_loss_patch.py",
+      "files": 1,
+      "bytes": 3549
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\set_canonical_aflow_run.py",
+      "files": 1,
+      "bytes": 3358
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\summarize_band_dirs.py",
+      "files": 1,
+      "bytes": 800
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\sync_phase_a.py",
+      "files": 1,
+      "bytes": 891
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\sync_phase_ab_docs.py",
+      "files": 1,
+      "bytes": 1116
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\sync_phase_a_artifacts.py",
+      "files": 1,
+      "bytes": 1609
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\sync_phase_a_v2.py",
+      "files": 1,
+      "bytes": 593
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\update_band_runtime_paths.py",
+      "files": 1,
+      "bytes": 5363
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\upgrade_ssl_train_loop.py",
+      "files": 1,
+      "bytes": 3795
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\verify_band_project_final.py",
+      "files": 1,
+      "bytes": 3340
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\verify_phase_a_smoke.py",
+      "files": 1,
+      "bytes": 798
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\verify_phase_b_server.py",
+      "files": 1,
+      "bytes": 1634
+    },
+    {
+      "kind": "project_temp_script",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\verify_server_merge_inputs.py",
+      "files": 1,
+      "bytes": 1240
+    },
+    {
+      "kind": "project_temp_artifact",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\band_export_20260824.tar.zst",
+      "files": 1,
+      "bytes": 931163031
+    },
+    {
+      "kind": "project_temp_artifact",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\band_export_result.json",
+      "files": 1,
+      "bytes": 1020
+    },
+    {
+      "kind": "project_temp_artifact",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\band_project_inventory.json",
+      "files": 1,
+      "bytes": 50653
+    },
+    {
+      "kind": "project_temp_artifact",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\cleanup_band_project_final.py",
+      "files": 1,
+      "bytes": 2475
+    },
+    {
+      "kind": "project_temp_artifact",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\formal_artifact_audit.txt",
+      "files": 1,
+      "bytes": 16771
+    },
+    {
+      "kind": "project_temp_artifact",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\migration_dry_run.json",
+      "files": 1,
+      "bytes": 9252
+    },
+    {
+      "kind": "project_temp_artifact",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\migration_execution.json",
+      "files": 1,
+      "bytes": 10188
+    },
+    {
+      "kind": "project_temp_artifact",
+      "path": "C:\\Users\\PeiYang\\AppData\\Local\\Temp\\mp_legacy_audit.json",
+      "files": 1,
+      "bytes": 3877
+    }
+  ]
+}

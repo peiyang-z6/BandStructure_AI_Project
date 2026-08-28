@@ -36,10 +36,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 # ── Paths ──
-OUTPUT_DIR = ROOT / "reports" / "gui_workbench"
-TRAINING_DATA_DIR = ROOT / "data_cache" / "human_annotations"
-TSNE_IMAGE = ROOT / "reports" / "finetune_supervised" / "latent_tsne_spacegroups.png"
-DETECTOR_PATH = ROOT / "models" / "vision_detector" / "band_plot_yolov8_pose_best.pt"
+OUTPUT_DIR = ROOT / "artifacts" / "reports" / "gui_workbench"
+TRAINING_DATA_DIR = ROOT / "data" / "annotations" / "human"
+TSNE_IMAGE = ROOT / "artifacts" / "reports" / "aflow_noleak_v5_30k_seed42" / "latent_tsne_spacegroups.png"
+DETECTOR_PATH = ROOT / "artifacts" / "models" / "vision_detector" / "band_plot_yolov8_pose_best.pt"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 TRAINING_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -1067,6 +1067,7 @@ class BandStructureWorkbench:
                 vbm_pixel={"x": ann_data["vbm"][0], "y": ann_data["vbm"][1]},
                 cbm_pixel={"x": ann_data["cbm"][0], "y": ann_data["cbm"][1]},
                 valence_points=vb_points, conduction_points=cb_points,
+                fermi_y_pixel=float(ann_data["fermi_y"]),
             )
 
             brain = _get_brain()
@@ -1105,9 +1106,9 @@ class BandStructureWorkbench:
                 f"  Direct prob:     {dp:.1%}",
             ]
             if vbm_m is not None and abs(vbm_m) < 100:
-                lines.append(f"  VB eff. mass:    {vbm_m:.4f} m_e")
+                lines.append(f"  VB curvature proxy: {vbm_m:.4f} (relative)")
             if cbm_m is not None and abs(cbm_m) < 100:
-                lines.append(f"  CB eff. mass:    {cbm_m:.4f} m_e")
+                lines.append(f"  CB curvature proxy: {cbm_m:.4f} (relative)")
             if recs:
                 lines.append("")
                 lines.append("  Recommendations:")

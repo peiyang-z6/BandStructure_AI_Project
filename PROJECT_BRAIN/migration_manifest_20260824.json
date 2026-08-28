@@ -1,0 +1,57 @@
+{
+  "schema_version": 2,
+  "status": "completed",
+  "completed_at": "2026-08-24T22:46:04+08:00",
+  "source_container": "C:/Users/PeiYang/Documents/AI Project/BandStructure AI Project",
+  "target_root": "C:/Users/PeiYang/Documents/AI Project/BandStructure AI Project/BandStructure_AI_Project",
+  "external_materials_root": "C:/Users/PeiYang/Documents/AI Project/BandStructure AI Project/资料",
+  "scientific_direction_unchanged": true,
+  "layout": {
+    "source_code": ["src", "scripts", "tests", "configs"],
+    "governance": "PROJECT_BRAIN",
+    "raw_data": "data/raw",
+    "processed_data": "data/processed",
+    "models": "artifacts/models/aflow_noleak_v4_seed42",
+    "checkpoints": "artifacts/checkpoints/aflow_noleak_v4_seed42",
+    "reports": "artifacts/reports/aflow_noleak_v4_seed42",
+    "logs": "artifacts/logs/aflow_noleak_v4_seed42"
+  },
+  "retained_data": {
+    "aflow_canonical_h5_groups": 6443,
+    "aflow_canonical_json": 6443,
+    "aflow_supplemental_unique_groups": 20,
+    "aflow_h5_variants": 2,
+    "materials_project_unique_groups": 12,
+    "processed_tensor_samples": 6441
+  },
+  "formal_experiment": {
+    "id": "aflow_noleak_v4_seed42",
+    "ssl_best_epoch": 37,
+    "ssl_early_stop_epoch": 52,
+    "supervised_best_epoch": 11,
+    "supervised_early_stop_epoch": 31,
+    "outer_gap_mae_ev": 0.04974662081150207,
+    "outer_type_accuracy": 0.8656832298136646,
+    "outer_macro_f1": 0.8583390506559992
+  },
+  "cleanup": {
+    "deleted_entries": 82,
+    "deleted_files": 458,
+    "deleted_bytes": 1210262345,
+    "deleted_gib": 1.127,
+    "quarantine_removed": true,
+    "transport_archive_removed": true,
+    "sensitive_temp_scripts_remaining": 0,
+    "python_cache_files_remaining": 0
+  },
+  "verification": {
+    "pytest": "39 passed in 41.57s",
+    "compileall": "passed",
+    "latest_model_load_and_inference": "passed",
+    "formal_h5_sha256": "bb261f1e3b3f602e3463ca32831e15b67f53bd5f9f2d951614ec1441b8c0b62d",
+    "formal_split_npz_sha256": "c6652b857a527cc4f8a389dc0ead14a318350643f5ecb1a65f3d6e17eb6eae59",
+    "artifact_non_rewritten_hash_mismatches": 0,
+    "materials_directory_inside_runtime_root": false,
+    "all_assertions_passed": true
+  }
+}

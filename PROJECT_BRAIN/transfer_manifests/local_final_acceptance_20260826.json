@@ -1,0 +1,125 @@
+{
+  "generated_at_utc": "2026-08-25T16:55:25.485461+00:00",
+  "experiment_id": "aflow_noleak_v5_30k_seed42",
+  "task_date": "2026-08-25",
+  "final_tests": "55 passed in 213.38s",
+  "latest_model_smoke": {
+    "samples": 2,
+    "finite": true,
+    "type_probability_sums_one": true,
+    "device": "CPU:0 portable-path smoke"
+  },
+  "remote_gpu_acceptance": {
+    "device": "Tesla V100-SXM2-16GB",
+    "gpu0_max_utilization_pct": 89,
+    "gpu0_max_memory_mib": 15114,
+    "cpu_fallback": false,
+    "accepted_model_reload_gpu": true
+  },
+  "security_cleanup": {
+    "ephemeral_key_revoked": true,
+    "remote_old_mirror_removed": true,
+    "remote_cache_candidates_remaining": 0,
+    "local_temp_files_removed": 41,
+    "local_temp_bytes_removed": 4529323910
+  },
+  "files": [
+    {
+      "path": "data/raw/aflow/snapshots/aflow_30000_20260825/raw_snapshot_manifest.json",
+      "bytes": 4815,
+      "sha256": "0370d14ad40748023773b1ed2aee1fcdb806fa9d74357e44920555e9740e99f7"
+    },
+    {
+      "path": "data/processed/aflow/ood_tensors_v5_30000_seed42/tensor_snapshot_audit.json",
+      "bytes": 1219,
+      "sha256": "70e890f435f40600d54cf3a2f426a7e9fc1dea867ca0c94815a619fb2754975f"
+    },
+    {
+      "path": "artifacts/models/aflow_noleak_v5_30k_seed42/ssl_mbm_pretrained.keras",
+      "bytes": 2604406,
+      "sha256": "8a57975a5461f8ebc5a18d424ce91ed752a4f6bfa36e7cc8cdb30edf7b9cc6c1"
+    },
+    {
+      "path": "artifacts/models/aflow_noleak_v5_30k_seed42/finetuned.weights.h5",
+      "bytes": 2837784,
+      "sha256": "91f42fc3bb67ab676ad369c01822b8f6b58bc2676dd968406e38fa3359b1a5be"
+    },
+    {
+      "path": "artifacts/checkpoints/aflow_noleak_v5_30k_seed42/ssl/ckpt-best.data-00000-of-00001",
+      "bytes": 6979442,
+      "sha256": "94e0d27b93a88cadacedfb18fd4da4aaa6821b1ccca5a126e82b476e0beebb59"
+    },
+    {
+      "path": "artifacts/checkpoints/aflow_noleak_v5_30k_seed42/supervised/best.weights.h5",
+      "bytes": 5410120,
+      "sha256": "3f55d2756a320c5a172da61155981747d18195dfa45e98423e5589964ef0e7f6"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/metrics_summary.json",
+      "bytes": 7648,
+      "sha256": "39c08e3133e62411ae67f8e1fb68cbf68b95d99448cd2324eaf7ce990b193535"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/ood_test_predictions.json",
+      "bytes": 3030193,
+      "sha256": "4d1aa9cc7e0fa5ef97ea7a08e8b7fe1f5c19529c69871737c07047e4bcce54e7"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/latest_training_report_20260825.md",
+      "bytes": 6950,
+      "sha256": "56fb8c6605665ba926d9167b0efcb5f06d02d63dbdd1f82146a426aeb1471cd5"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/server_return_import_audit.json",
+      "bytes": 593,
+      "sha256": "1aa59c6c1ea7341890a7c7de97abab7d371b36d44d635e3408f5d639cb58e2d0"
+    },
+    {
+      "path": "PROJECT_BRAIN/transfer_manifests/post_training_sync_20260826.json",
+      "bytes": 2455,
+      "sha256": "54640b5191dfee5933d75bd5e996c714975f335c14eb15a10b222611c9d6f4c0"
+    },
+    {
+      "path": "README.md",
+      "bytes": 9157,
+      "sha256": "745fca34a6fcca8b8751165d8d032d2a2ab8c980a032049440ba318a987cb2f0"
+    },
+    {
+      "path": "PROJECT_BRAIN/dev_context.md",
+      "bytes": 8479,
+      "sha256": "222fd8681cbe6b98d0456c6c2e8ab4a9ca15df3bc730b8182dd799ce5c2a18ea"
+    },
+    {
+      "path": "PROJECT_BRAIN/CONSTITUTION.md",
+      "bytes": 8188,
+      "sha256": "18d83badd179498dc2723442884f430ab696c657b21d4ed6cd57076c476ad904"
+    },
+    {
+      "path": "PROJECT_BRAIN/agent_logs/20260825_aflow_30000_gpu_training_execution.md",
+      "bytes": 10321,
+      "sha256": "0c9d61ee062061e93634e01df939387b923de901179194464c524ac156deb8e2"
+    },
+    {
+      "path": "scripts/finetune_supervised.py",
+      "bytes": 72743,
+      "sha256": "65d8b35278b8e00499db2c172688db64dd1642f47de8f17d6b065a8568c7863f"
+    },
+    {
+      "path": "scripts/gui_workbench.py",
+      "bytes": 57356,
+      "sha256": "30d86854b8fc6b2b48d6a6b3375a0975317235d1eb442a84e03301cfc4d7d38b"
+    },
+    {
+      "path": "src/vision/brain_invoker.py",
+      "bytes": 17765,
+      "sha256": "cf123c5393476c7c9f02fa22ced586d8347bd4698445aa3533ec0fd89d4b936a"
+    },
+    {
+      "path": "tests/smoke_latest_model.py",
+      "bytes": 1902,
+      "sha256": "ac5e8e060dae240efffeb018931e10727f595b64267034ee9ba820a9f34ed4bb"
+    }
+  ],
+  "file_count": 19,
+  "total_bytes": 21071536
+}

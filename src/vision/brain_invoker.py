@@ -12,6 +12,7 @@ import numpy as np
 import tensorflow as tf
 
 from scripts.finetune_supervised import SupervisedBandGapModel, load_norm_stats
+from src.models import load_ssl_encoder
 
 from .physics_reconstructor import ReconstructedTensor
 
@@ -47,10 +48,10 @@ class PhysicsBrainInvoker:
 
     def __init__(
         self,
-        encoder_path: str = "models/ssl_mbm_pretrained.keras",
-        weights_path: str = "models/finetuned_gap_predictor.weights.h5",
-        norm_path: str = "models/ssl_mbm_norm_stats.json",
-        config_path: str = "models/finetuned_gap_predictor_config.json",
+        encoder_path: str = "artifacts/models/aflow_noleak_v5_30k_seed42/ssl_mbm_pretrained.keras",
+        weights_path: str = "artifacts/models/aflow_noleak_v5_30k_seed42/finetuned.weights.h5",
+        norm_path: str = "artifacts/models/aflow_noleak_v5_30k_seed42/ssl_mbm_norm_stats.json",
+        config_path: str = "artifacts/models/aflow_noleak_v5_30k_seed42/finetuned_config.json",
     ) -> None:
         self.encoder_path = Path(encoder_path)
         self.weights_path = Path(weights_path)
@@ -121,7 +122,7 @@ class PhysicsBrainInvoker:
         if not self.weights_path.exists():
             raise FileNotFoundError(self.weights_path)
 
-        encoder = tf.keras.models.load_model(str(self.encoder_path), compile=False)
+        encoder = load_ssl_encoder(str(self.encoder_path), compile=False)
         feature_mean = self.mean.reshape(-1).astype(np.float32)
         feature_std = self.std.reshape(-1).astype(np.float32)
         model = SupervisedBandGapModel(encoder, feature_mean=feature_mean, feature_std=feature_std)

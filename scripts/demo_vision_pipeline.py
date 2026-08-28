@@ -100,9 +100,9 @@ def run_demo(args: argparse.Namespace) -> Dict[str, Any]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Phase 5 CV locator demo")
     parser.add_argument("input", nargs="?", help="Local PDF/PNG/JPG/MP4/GIF path. Drag-and-drop is supported.")
-    parser.add_argument("--output-dir", default="reports/vision_pipeline")
+    parser.add_argument("--output-dir", default="artifacts/reports/vision_pipeline")
     parser.add_argument("--target-k-points", type=int, default=128)
-    parser.add_argument("--detector", default="models/vision_detector/band_plot_yolov8_pose_best.pt")
+    parser.add_argument("--detector", default="artifacts/models/vision_detector/band_plot_yolov8_pose_best.pt")
     parser.add_argument("--detector-conf", type=float, default=0.05)
     args = parser.parse_args()
     if not args.input:

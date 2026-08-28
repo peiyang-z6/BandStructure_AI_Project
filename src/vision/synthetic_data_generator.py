@@ -25,8 +25,8 @@ import numpy as np
 
 @dataclass
 class SyntheticConfig:
-    h5_path: str = "data_cache/mp_bands.h5"
-    output_dir: str = "data_cache/vision_synthetic"
+    h5_path: str = "data/raw/materials_project/mp_bands.h5"
+    output_dir: str = "data/processed/vision/synthetic"
     count: int = 5000
     image_size: Tuple[int, int] = (768, 768)
     random_state: int = 42

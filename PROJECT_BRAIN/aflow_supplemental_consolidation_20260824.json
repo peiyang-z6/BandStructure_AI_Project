@@ -1,0 +1,31 @@
+{
+  "executed_at": "2026-08-24T21:56:49+0800",
+  "canonical_groups": 6443,
+  "legacy_groups_checked": 2445,
+  "supplemental_unique_groups": 20,
+  "supplemental_unique_ids": [
+    "aflow-00b2cb9ded2f9399",
+    "aflow-15548c3cdbd795f3",
+    "aflow-1edc7dbdc9d77646",
+    "aflow-27381266885000c3",
+    "aflow-35063fd9d9a9bef7",
+    "aflow-38dacc5479d1feba",
+    "aflow-3c08bfe385ee9d26",
+    "aflow-494304bf6885b8a6",
+    "aflow-53193f9efe1e369e",
+    "aflow-5bbac16a5fef6a01",
+    "aflow-5c1abf777424b59a",
+    "aflow-62ff015aa556bace",
+    "aflow-8b9920e9646f01c1",
+    "aflow-a926ccf126b68130",
+    "aflow-af2c2a2fe49bf1b9",
+    "aflow-b3860f8b2cd99c72",
+    "aflow-d458d7f192389d10",
+    "aflow-dbf7f5fad86c08d0",
+    "aflow-ea6d6280ed2b9340",
+    "aflow-effc26733b84f898"
+  ],
+  "h5_variants_preserved": 2,
+  "json_variants_preserved": 0,
+  "supplemental_json_count": 20
+}

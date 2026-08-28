@@ -1,0 +1,301 @@
+{
+  "schema_version": 1,
+  "executed_at": "2026-08-24T21:30:28+0800",
+  "operations": [
+    {
+      "action": "move",
+      "source": ".git",
+      "target": "BandStructure_AI_Project\\.git"
+    },
+    {
+      "action": "move",
+      "source": ".gitignore",
+      "target": "BandStructure_AI_Project\\.gitignore"
+    },
+    {
+      "action": "move",
+      "source": "configs",
+      "target": "BandStructure_AI_Project\\configs"
+    },
+    {
+      "action": "move",
+      "source": "PROJECT_BRAIN",
+      "target": "BandStructure_AI_Project\\PROJECT_BRAIN"
+    },
+    {
+      "action": "move",
+      "source": "README.md",
+      "target": "BandStructure_AI_Project\\README.md"
+    },
+    {
+      "action": "move",
+      "source": "requirements.txt",
+      "target": "BandStructure_AI_Project\\requirements.txt"
+    },
+    {
+      "action": "move",
+      "source": "requirements-dev.txt",
+      "target": "BandStructure_AI_Project\\requirements-dev.txt"
+    },
+    {
+      "action": "move",
+      "source": "requirements-gpu.txt",
+      "target": "BandStructure_AI_Project\\requirements-gpu.txt"
+    },
+    {
+      "action": "move",
+      "source": "requirements-vision.txt",
+      "target": "BandStructure_AI_Project\\requirements-vision.txt"
+    },
+    {
+      "action": "move",
+      "source": "scripts",
+      "target": "BandStructure_AI_Project\\scripts"
+    },
+    {
+      "action": "move",
+      "source": "src",
+      "target": "BandStructure_AI_Project\\src"
+    },
+    {
+      "action": "move",
+      "source": "tests",
+      "target": "BandStructure_AI_Project\\tests"
+    },
+    {
+      "action": "mkdir",
+      "source": "BandStructure_AI_Project\\data\\raw\\aflow\\legacy_downloads\\local_2400_snapshot",
+      "target": null
+    },
+    {
+      "action": "mkdir",
+      "source": "BandStructure_AI_Project\\data\\raw\\materials_project\\legacy_downloads",
+      "target": null
+    },
+    {
+      "action": "mkdir",
+      "source": "BandStructure_AI_Project\\data\\processed\\aflow",
+      "target": null
+    },
+    {
+      "action": "mkdir",
+      "source": "BandStructure_AI_Project\\artifacts\\models",
+      "target": null
+    },
+    {
+      "action": "mkdir",
+      "source": "BandStructure_AI_Project\\artifacts\\checkpoints",
+      "target": null
+    },
+    {
+      "action": "mkdir",
+      "source": "BandStructure_AI_Project\\artifacts\\reports",
+      "target": null
+    },
+    {
+      "action": "mkdir",
+      "source": "BandStructure_AI_Project\\artifacts\\logs",
+      "target": null
+    },
+    {
+      "action": "move",
+      "source": "data_cache\\aflow_bands.h5",
+      "target": "BandStructure_AI_Project\\data\\raw\\aflow\\legacy_downloads\\local_2400_snapshot\\aflow_bands.h5"
+    },
+    {
+      "action": "move",
+      "source": "data_cache\\aflow_metadata.json",
+      "target": "BandStructure_AI_Project\\data\\raw\\aflow\\legacy_downloads\\local_2400_snapshot\\aflow_metadata.json"
+    },
+    {
+      "action": "move",
+      "source": "data_cache\\aflow_download_report.json",
+      "target": "BandStructure_AI_Project\\data\\raw\\aflow\\legacy_downloads\\local_2400_snapshot\\aflow_download_report.json"
+    },
+    {
+      "action": "move",
+      "source": "data_cache\\aflow_excluded.json",
+      "target": "BandStructure_AI_Project\\data\\raw\\aflow\\legacy_downloads\\local_2400_snapshot\\aflow_excluded.json"
+    },
+    {
+      "action": "move",
+      "source": "data_cache\\aflow_download_live.log",
+      "target": "BandStructure_AI_Project\\data\\raw\\aflow\\legacy_downloads\\local_2400_snapshot\\aflow_download_live.log"
+    },
+    {
+      "action": "move",
+      "source": "data_cache\\json_cache",
+      "target": "BandStructure_AI_Project\\data\\raw\\aflow\\json_cache"
+    },
+    {
+      "action": "move",
+      "source": "data_cache\\aflow_ood_tensors_6443_noleak_v4",
+      "target": "BandStructure_AI_Project\\data\\processed\\aflow\\ood_tensors"
+    },
+    {
+      "action": "move",
+      "source": "data_cache\\stage0_smoke",
+      "target": "BandStructure_AI_Project\\data\\raw\\aflow\\legacy_downloads\\stage0_smoke"
+    },
+    {
+      "action": "move",
+      "source": "data_cache\\stage0_stratified",
+      "target": "BandStructure_AI_Project\\data\\raw\\aflow\\legacy_downloads\\stage0_stratified"
+    },
+    {
+      "action": "move",
+      "source": "data_cache\\stage0_wsl_range",
+      "target": "BandStructure_AI_Project\\data\\raw\\aflow\\legacy_downloads\\stage0_wsl_range"
+    },
+    {
+      "action": "move",
+      "source": "data_cache\\stage1_smoke",
+      "target": "BandStructure_AI_Project\\data\\raw\\aflow\\legacy_downloads\\stage1_smoke"
+    },
+    {
+      "action": "move",
+      "source": "data_cache\\mp_concurrency_smoke",
+      "target": "BandStructure_AI_Project\\data\\raw\\materials_project\\legacy_downloads\\mp_concurrency_smoke"
+    },
+    {
+      "action": "move",
+      "source": "data_cache\\mp_single_client_smoke",
+      "target": "BandStructure_AI_Project\\data\\raw\\materials_project\\legacy_downloads\\mp_single_client_smoke"
+    },
+    {
+      "action": "move",
+      "source": "data_cache\\mp_throughput_smoke",
+      "target": "BandStructure_AI_Project\\data\\raw\\materials_project\\legacy_downloads\\mp_throughput_smoke"
+    },
+    {
+      "action": "move",
+      "source": "data_cache\\stage1_smoke_mp",
+      "target": "BandStructure_AI_Project\\data\\raw\\materials_project\\legacy_downloads\\stage1_smoke_mp"
+    },
+    {
+      "action": "move",
+      "source": "data_cache\\mp_download_live.log",
+      "target": "BandStructure_AI_Project\\data\\raw\\materials_project\\download_local.log"
+    },
+    {
+      "action": "move",
+      "source": "BandStructure_AI_Project\\data\\raw\\aflow\\legacy_downloads\\stage0_smoke\\ood_tensors",
+      "target": "._migration_quarantine_20260824\\derived_tensors\\stage0_smoke\\ood_tensors"
+    },
+    {
+      "action": "move",
+      "source": "BandStructure_AI_Project\\data\\raw\\aflow\\legacy_downloads\\stage0_wsl_range\\ood_tensors",
+      "target": "._migration_quarantine_20260824\\derived_tensors\\stage0_wsl_range\\ood_tensors"
+    },
+    {
+      "action": "move",
+      "source": "BandStructure_AI_Project\\data\\raw\\aflow\\legacy_downloads\\stage1_smoke\\aflow_ood_tensors",
+      "target": "._migration_quarantine_20260824\\derived_tensors\\stage1_smoke\\aflow_ood_tensors"
+    },
+    {
+      "action": "move",
+      "source": "data_cache\\aflow_ood_tensors_6443",
+      "target": "._migration_quarantine_20260824\\data_cache\\aflow_ood_tensors_6443"
+    },
+    {
+      "action": "move",
+      "source": "data_cache\\aflow_ood_tensors_metalfix",
+      "target": "._migration_quarantine_20260824\\data_cache\\aflow_ood_tensors_metalfix"
+    },
+    {
+      "action": "move",
+      "source": "data_cache\\mp_batch_probe",
+      "target": "._migration_quarantine_20260824\\data_cache\\mp_batch_probe"
+    },
+    {
+      "action": "move",
+      "source": "data_cache\\mp_batch_smoke",
+      "target": "._migration_quarantine_20260824\\data_cache\\mp_batch_smoke"
+    },
+    {
+      "action": "move",
+      "source": "data_cache\\mp_reuse_smoke",
+      "target": "._migration_quarantine_20260824\\data_cache\\mp_reuse_smoke"
+    },
+    {
+      "action": "move",
+      "source": "data_cache\\stage1_keycheck",
+      "target": "._migration_quarantine_20260824\\data_cache\\stage1_keycheck"
+    },
+    {
+      "action": "move",
+      "source": "data_cache",
+      "target": "._migration_quarantine_20260824\\data_cache_remainder"
+    },
+    {
+      "action": "move",
+      "source": "models",
+      "target": "._migration_quarantine_20260824\\legacy_artifacts\\models"
+    },
+    {
+      "action": "move",
+      "source": "checkpoints",
+      "target": "._migration_quarantine_20260824\\legacy_artifacts\\checkpoints"
+    },
+    {
+      "action": "move",
+      "source": "reports",
+      "target": "._migration_quarantine_20260824\\legacy_artifacts\\reports"
+    },
+    {
+      "action": "move",
+      "source": "logs",
+      "target": "._migration_quarantine_20260824\\legacy_artifacts\\logs"
+    },
+    {
+      "action": "move",
+      "source": "finetune_6443.log",
+      "target": "._migration_quarantine_20260824\\legacy_artifacts\\root_logs\\finetune_6443.log"
+    },
+    {
+      "action": "move",
+      "source": "finetune_metalfix.log",
+      "target": "._migration_quarantine_20260824\\legacy_artifacts\\root_logs\\finetune_metalfix.log"
+    },
+    {
+      "action": "move",
+      "source": "finetune_metalfix_v2.log",
+      "target": "._migration_quarantine_20260824\\legacy_artifacts\\root_logs\\finetune_metalfix_v2.log"
+    },
+    {
+      "action": "move",
+      "source": "finetune_run.log",
+      "target": "._migration_quarantine_20260824\\legacy_artifacts\\root_logs\\finetune_run.log"
+    },
+    {
+      "action": "move",
+      "source": "ssl_6443.log",
+      "target": "._migration_quarantine_20260824\\legacy_artifacts\\root_logs\\ssl_6443.log"
+    },
+    {
+      "action": "move",
+      "source": ".sync_backup_20260813",
+      "target": "._migration_quarantine_20260824\\temporary\\.sync_backup_20260813"
+    },
+    {
+      "action": "move",
+      "source": ".obsidian",
+      "target": "._migration_quarantine_20260824\\temporary\\.obsidian"
+    },
+    {
+      "action": "move",
+      "source": ".pytest_cache",
+      "target": "._migration_quarantine_20260824\\temporary\\.pytest_cache"
+    },
+    {
+      "action": "move",
+      "source": "=3.5,",
+      "target": "._migration_quarantine_20260824\\temporary\\=3.5,"
+    },
+    {
+      "action": "move",
+      "source": "BandStructure_AI_Project\\scripts\\server_ssh.py",
+      "target": "._migration_quarantine_20260824\\temporary\\server_ssh.py"
+    }
+  ]
+}

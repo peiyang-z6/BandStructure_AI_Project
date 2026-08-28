@@ -15,14 +15,17 @@ sample-wise splitting is intentionally not used.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import re
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import h5py
 import numpy as np
-from scipy.interpolate import CubicSpline, interp1d
+from scipy.interpolate import CubicSpline, PchipInterpolator, interp1d
 # GroupShuffleSplit removed — replaced by stratified group split below
 
 
@@ -35,6 +38,7 @@ class ProcessedBandSample:
     efermi: float
     vbm_band_idx: int
     cbm_band_idx: int
+    gap_type: int
 
 
 def _read_metadata_json(metadata_path: Optional[str]) -> Dict[str, Dict[str, Any]]:
@@ -92,6 +96,22 @@ def _as_int(value: Any, default: Optional[int] = None) -> Optional[int]:
         return default
 
 
+def _as_bool(value: Any, default: Optional[bool] = None) -> Optional[bool]:
+    if value is None:
+        return default
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes"}:
+            return True
+        if normalized in {"false", "0", "no"}:
+            return False
+    if isinstance(value, (int, float, np.number)):
+        return bool(value)
+    return default
+
+
 def _parse_json_attr(value: Any, default: Any) -> Any:
     if value is None:
         return default
@@ -125,7 +145,14 @@ def _resampled_kpath_labels(metadata: Dict[str, Any], target_k_points: int) -> L
         label = item.get("label")
         if raw_idx is None or label is None:
             continue
-        new_idx = int(round(raw_idx * (target_k_points - 1) / (original_k - 1)))
+        raw_distance = _as_float(item.get("k_distance"))
+        path_min = _as_float(metadata.get("k_distance_min"), 0.0) or 0.0
+        path_max = _as_float(metadata.get("k_distance_max"))
+        if raw_distance is not None and path_max is not None and path_max > path_min:
+            fraction = (raw_distance - path_min) / (path_max - path_min)
+            new_idx = int(round(fraction * (target_k_points - 1)))
+        else:
+            new_idx = int(round(raw_idx * (target_k_points - 1) / (original_k - 1)))
         new_idx = max(0, min(target_k_points - 1, new_idx))
         key = (new_idx, str(label))
         if key in seen:
@@ -139,17 +166,69 @@ def _resampled_kpath_labels(metadata: Dict[str, Any], target_k_points: int) -> L
     ]
 
 
+def _segment_ids_from_resampled_labels(
+    labels: List[Dict[str, Any]],
+    target_k_points: int,
+) -> np.ndarray:
+    """Assign each resampled k point to one high-symmetry path segment."""
+    positions = sorted(
+        {
+            max(0, min(target_k_points - 1, int(item["index"])))
+            for item in labels
+            if isinstance(item, dict) and item.get("index") is not None
+        }
+    )
+    if not positions or positions[0] != 0:
+        positions.insert(0, 0)
+    if positions[-1] != target_k_points - 1:
+        positions.append(target_k_points - 1)
+    segment_ids = np.zeros(target_k_points, dtype=np.int32)
+    for segment_id, (start, end) in enumerate(zip(positions[:-1], positions[1:])):
+        segment_ids[start : end + 1] = segment_id
+    return segment_ids
+
+
 def _select_spin_channel(energies: np.ndarray) -> np.ndarray:
     energies = np.asarray(energies, dtype=np.float32)
     if energies.ndim == 3:
-        energies = energies[0]
+        energies = energies.reshape(-1, energies.shape[-1])
     if energies.ndim != 2:
         raise ValueError(f"Expected energies with rank 2 or 3, got shape {energies.shape}")
     return energies
 
 
-def _select_vbm_cbm_indices(energies: np.ndarray, efermi: Optional[float]) -> Tuple[int, int]:
-    """Select VBM and CBM band indices using Fermi level when available."""
+def _fermi_crossing_band_index(
+    energies: np.ndarray,
+    efermi: Optional[float],
+    segment_ids: Optional[np.ndarray] = None,
+) -> Optional[int]:
+    """Infer a Fermi crossing within one continuous k-path segment only."""
+    if efermi is None or not np.isfinite(efermi):
+        return None
+    segments = (
+        np.zeros(energies.shape[-1], dtype=np.int32)
+        if segment_ids is None
+        else np.asarray(segment_ids, dtype=np.int32)
+    )
+    if len(segments) != energies.shape[-1]:
+        raise ValueError("segment_ids length must match raw k-point count")
+    candidates: List[Tuple[float, int]] = []
+    for band_idx, band in enumerate(energies):
+        for segment_id in np.unique(segments):
+            values = band[segments == segment_id]
+            if len(values) and float(np.min(values)) <= efermi <= float(np.max(values)):
+                candidates.append((float(np.min(np.abs(values - efermi))), int(band_idx)))
+                break
+    if not candidates:
+        return None
+    return min(candidates)[1]
+
+
+def _select_vbm_cbm_indices(
+    energies: np.ndarray,
+    efermi: Optional[float],
+) -> Tuple[int, int]:
+    """Select non-crossing VBM/CBM bands using E(k) and E_F only."""
     num_bands = energies.shape[0]
     if num_bands < 2:
         raise ValueError("Need at least two bands to build VBM/CBM tensor")
@@ -161,52 +240,109 @@ def _select_vbm_cbm_indices(energies: np.ndarray, efermi: Optional[float]) -> Tu
     if efermi is not None and np.isfinite(efermi):
         valence_candidates = np.where(band_max <= efermi)[0]
         conduction_candidates = np.where(band_min >= efermi)[0]
-
         if len(valence_candidates) > 0 and len(conduction_candidates) > 0:
             vbm_idx = int(valence_candidates[np.argmax(band_max[valence_candidates])])
             cbm_idx = int(conduction_candidates[np.argmin(band_min[conduction_candidates])])
             if vbm_idx != cbm_idx:
                 return vbm_idx, cbm_idx
 
+        # Label-free fallback for crossing/semimetal-like paths: choose distinct
+        # bands carrying the occupied and empty states closest to E_F.
+        below = np.where(energies <= efermi, energies, -np.inf)
+        above = np.where(energies >= efermi, energies, np.inf)
+        occupied_edge = np.max(below, axis=1)
+        empty_edge = np.min(above, axis=1)
+        for vbm_idx in np.argsort(np.abs(occupied_edge - efermi)):
+            if not np.isfinite(occupied_edge[vbm_idx]):
+                continue
+            for cbm_idx in np.argsort(np.abs(empty_edge - efermi)):
+                if np.isfinite(empty_edge[cbm_idx]) and vbm_idx != cbm_idx:
+                    return int(vbm_idx), int(cbm_idx)
+
     sorted_by_mean = np.argsort(band_mean)
     mid = max(1, min(len(sorted_by_mean) - 1, len(sorted_by_mean) // 2))
     return int(sorted_by_mean[mid - 1]), int(sorted_by_mean[mid])
 
 
-def _resample_band(band: np.ndarray, target_k_points: int) -> np.ndarray:
+def _source_k_axis(k_distances: Optional[np.ndarray], old_len: int) -> np.ndarray:
+    if k_distances is None:
+        return np.linspace(0.0, 1.0, old_len, dtype=np.float64)
+    axis = np.asarray(k_distances, dtype=np.float64).reshape(-1)
+    if len(axis) != old_len or not np.all(np.isfinite(axis)) or np.any(np.diff(axis) < -1.0e-8):
+        return np.linspace(0.0, 1.0, old_len, dtype=np.float64)
+    if float(axis[-1] - axis[0]) <= 1.0e-12:
+        return np.linspace(0.0, 1.0, old_len, dtype=np.float64)
+    return axis
+
+
+def _resample_band(
+    band: np.ndarray,
+    target_k_points: int,
+    k_distances: Optional[np.ndarray] = None,
+    shape_preserving: bool = False,
+) -> np.ndarray:
     band = np.asarray(band, dtype=np.float32)
     old_len = len(band)
     if old_len < 2:
         raise ValueError("Cannot interpolate a band with fewer than two k-points")
 
-    x_old = np.linspace(0.0, 1.0, old_len)
-    x_new = np.linspace(0.0, 1.0, target_k_points)
+    x_old = _source_k_axis(k_distances, old_len)
+    x_new = np.linspace(float(x_old[0]), float(x_old[-1]), target_k_points)
+
+    # Repeated path coordinates can occur at disconnected branch boundaries.
+    # Average them to give interpolation a strictly increasing coordinate.
+    unique_x, inverse = np.unique(x_old, return_inverse=True)
+    if len(unique_x) != len(x_old):
+        sums = np.bincount(inverse, weights=band.astype(np.float64))
+        counts = np.bincount(inverse)
+        band = (sums / np.maximum(counts, 1)).astype(np.float32)
+        x_old = unique_x
 
     if old_len >= 4:
-        return CubicSpline(x_old, band)(x_new).astype(np.float32)
+        interpolator = PchipInterpolator(x_old, band) if shape_preserving else CubicSpline(x_old, band)
+        return interpolator(x_new).astype(np.float32)
 
     return interp1d(x_old, band, kind="linear")(x_new).astype(np.float32)
 
 
-def _curvature(band: np.ndarray) -> np.ndarray:
-    """Compute local quadratic curvature at every k-point via windowed polyfit.
-
-    Uses np.polyfit on a local window of ±2 points around each k-index, yielding
-    more accurate extremum curvature than global np.gradient(np.gradient(...)).
-    """
+def _curvature(
+    band: np.ndarray,
+    k_axis: Optional[np.ndarray] = None,
+    segment_ids: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """Compute local quadratic curvature without crossing k-path segments."""
     band = np.asarray(band, dtype=np.float64)
     n = len(band)
     curv = np.zeros(n, dtype=np.float64)
     half_window = 2
+    x_axis = (
+        np.asarray(k_axis, dtype=np.float64)
+        if k_axis is not None
+        else np.linspace(0.0, 1.0, n, dtype=np.float64)
+    )
+    segments = None if segment_ids is None else np.asarray(segment_ids, dtype=np.int32)
+    if segments is not None and len(segments) != n:
+        raise ValueError("segment_ids length must match band length")
     for i in range(n):
         lo = max(0, i - half_window)
         hi = min(n, i + half_window + 1)
-        x_local = np.arange(lo, hi, dtype=np.float64) - float(i)
-        y_local = band[lo:hi]
+        indices = np.arange(lo, hi)
+        if segments is not None:
+            indices = indices[segments[indices] == segments[i]]
+        x_local = x_axis[indices] - x_axis[i]
+        y_local = band[indices]
         if len(x_local) < 3:
-            # Fallback: use central finite difference
-            if i > 0 and i < n - 1:
-                curv[i] = band[i + 1] - 2.0 * band[i] + band[i - 1]
+            same_segment_neighbors = (
+                i > 0
+                and i < n - 1
+                and (
+                    segments is None
+                    or (segments[i - 1] == segments[i] == segments[i + 1])
+                )
+            )
+            if same_segment_neighbors:
+                dx = max(float(x_axis[i + 1] - x_axis[i]), 1.0e-12)
+                curv[i] = (band[i + 1] - 2.0 * band[i] + band[i - 1]) / (dx * dx)
             continue
         coeff = np.polyfit(x_local, y_local, deg=2)
         curv[i] = 2.0 * coeff[0]
@@ -219,16 +355,53 @@ def _extremum_distance_channel(extremum_idx: int, target_k_points: int) -> np.nd
     return ((np.arange(target_k_points, dtype=np.float32) - center) / denom).astype(np.float32)
 
 
+def _edge_envelopes(
+    energies: np.ndarray,
+    efermi: float,
+) -> Tuple[np.ndarray, np.ndarray, int, int]:
+    """Build label-free occupied/empty edge envelopes at every k point."""
+    below = np.where(energies <= efermi, energies, -np.inf)
+    above = np.where(energies >= efermi, energies, np.inf)
+    vbm = np.max(below, axis=0)
+    cbm = np.min(above, axis=0)
+    if not np.all(np.isfinite(vbm)) or not np.all(np.isfinite(cbm)):
+        raise ValueError("cannot construct occupied/empty edge envelopes at all k points")
+    vbm_k = int(np.argmax(vbm))
+    cbm_k = int(np.argmin(cbm))
+    vbm_idx = int(np.argmax(below[:, vbm_k]))
+    cbm_idx = int(np.argmin(above[:, cbm_k]))
+    return vbm.astype(np.float32), cbm.astype(np.float32), vbm_idx, cbm_idx
+
+
 def _build_sample_tensor(
     energies: np.ndarray,
     efermi: Optional[float],
     target_k_points: int,
-) -> Tuple[np.ndarray, int, int]:
+    k_distances: Optional[np.ndarray] = None,
+    segment_ids: Optional[np.ndarray] = None,
+    raw_segment_ids: Optional[np.ndarray] = None,
+) -> Tuple[np.ndarray, int, int, bool]:
     energies = _select_spin_channel(energies)
-    vbm_idx, cbm_idx = _select_vbm_cbm_indices(energies, efermi)
-
-    vbm = _resample_band(energies[vbm_idx], target_k_points)
-    cbm = _resample_band(energies[cbm_idx], target_k_points)
+    crossing_idx = _fermi_crossing_band_index(
+        energies, efermi, segment_ids=raw_segment_ids
+    )
+    metal_feature_inferred = crossing_idx is not None
+    # Crossing is audit information only. The feature tensor uses the same
+    # occupied/empty edge-envelope rule for every provider label.
+    if efermi is None or not np.isfinite(efermi):
+        raise ValueError("finite Fermi reference required for edge envelopes")
+    vbm_raw, cbm_raw, vbm_idx, cbm_idx = _edge_envelopes(energies, float(efermi))
+    vbm = _resample_band(vbm_raw, target_k_points, k_distances, shape_preserving=True)
+    cbm = _resample_band(cbm_raw, target_k_points, k_distances, shape_preserving=True)
+    vbm = np.minimum(vbm, float(efermi)).astype(np.float32)
+    cbm = np.maximum(cbm, float(efermi)).astype(np.float32)
+    source_axis = _source_k_axis(k_distances, energies.shape[-1])
+    k_axis = np.linspace(
+        float(source_axis[0]),
+        float(source_axis[-1]),
+        target_k_points,
+        dtype=np.float32,
+    )
     vbm_extreme_idx = int(np.argmax(vbm))
     cbm_extreme_idx = int(np.argmin(cbm))
 
@@ -237,7 +410,7 @@ def _build_sample_tensor(
             np.stack(
                 [
                     vbm,
-                    _curvature(vbm),
+                    _curvature(vbm, k_axis, segment_ids=segment_ids),
                     _extremum_distance_channel(vbm_extreme_idx, target_k_points),
                 ],
                 axis=-1,
@@ -245,7 +418,7 @@ def _build_sample_tensor(
             np.stack(
                 [
                     cbm,
-                    _curvature(cbm),
+                    _curvature(cbm, k_axis, segment_ids=segment_ids),
                     _extremum_distance_channel(cbm_extreme_idx, target_k_points),
                 ],
                 axis=-1,
@@ -254,14 +427,14 @@ def _build_sample_tensor(
         axis=0,
     ).astype(np.float32)
 
-    return tensor, vbm_idx, cbm_idx
+    return tensor, vbm_idx, cbm_idx, metal_feature_inferred
 
 
 def process_band_data(
     h5_path: str,
     metadata_path: Optional[str] = None,
     target_k_points: int = 128,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, List[Dict[str, Any]]]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, List[Dict[str, Any]]]:
     """Process raw HDF5 band data into tensors and labels."""
     metadata_by_id = _read_metadata_json(metadata_path)
 
@@ -269,6 +442,7 @@ def process_band_data(
     gaps: List[float] = []
     groups: List[int] = []
     material_ids: List[str] = []
+    gap_types: List[int] = []
     sample_metadata: List[Dict[str, Any]] = []
     skipped: List[Dict[str, str]] = []
 
@@ -284,7 +458,23 @@ def process_band_data(
                 metadata.get("spacegroup_number", metadata.get("spacegroup"))
             )
             band_gap = _as_float(metadata.get("band_gap"))
-            efermi = _as_float(metadata.get("efermi"))
+            source = str(metadata.get("source", "unknown")).lower()
+            source_efermi_absolute = _as_float(
+                metadata.get("source_efermi_absolute", metadata.get("efermi"))
+            )
+            energy_reference = str(metadata.get("energy_reference") or "absolute")
+            if source == "aflow" or energy_reference == "fermi_shifted_zero":
+                efermi = 0.0
+                energy_reference = "fermi_shifted_zero"
+            else:
+                efermi = _as_float(metadata.get("efermi"))
+            provider_is_metal = _as_bool(metadata.get("is_metal"))
+            is_metal = provider_is_metal
+            metal_label_source = "provider_is_metal"
+            if is_metal is None:
+                is_metal = bool((band_gap or 0.0) <= 0.01)
+                metal_label_source = "fallback_band_gap"
+            is_direct_value = _as_bool(metadata.get("is_direct"))
 
             if spacegroup is None:
                 skipped.append({"material_id": material_id, "reason": "missing spacegroup"})
@@ -293,29 +483,78 @@ def process_band_data(
                 skipped.append({"material_id": material_id, "reason": "missing band_gap"})
                 continue
 
+            raw_energies = grp["energies"][:]
+            raw_labels = _parse_json_attr(metadata.get("kpath_labels"), [])
+            raw_segment_ids = _segment_ids_from_resampled_labels(
+                raw_labels, raw_energies.shape[-1]
+            )
+            resampled_labels = _resampled_kpath_labels(metadata, target_k_points)
+            segment_ids = _segment_ids_from_resampled_labels(resampled_labels, target_k_points)
             try:
-                tensor, vbm_idx, cbm_idx = _build_sample_tensor(
-                    grp["energies"][:],
+                tensor, vbm_idx, cbm_idx, metal_feature_inferred = _build_sample_tensor(
+                    raw_energies,
                     efermi=efermi,
                     target_k_points=target_k_points,
+                    k_distances=grp["k_distances"][:] if "k_distances" in grp else None,
+                    segment_ids=segment_ids,
+                    raw_segment_ids=raw_segment_ids,
                 )
             except Exception as exc:
                 skipped.append({"material_id": material_id, "reason": str(exc)})
+                continue
+
+            # Data-quality filter: skip samples whose tensor band gap is strongly
+            # negative (VBM/CBM selection pathology in some AFLOW records). A small
+            # negative tolerance is kept for numerical noise; anything beyond it is
+            # physically inconsistent with a non-negative DFT gap label.
+            tensor_gap = float(np.min(tensor[1, :, 0]) - np.max(tensor[0, :, 0]))
+            if not metal_feature_inferred and tensor_gap < -0.05:
+                skipped.append({
+                    "material_id": material_id,
+                    "reason": f"negative tensor gap ({tensor_gap:.3f} eV)",
+                })
                 continue
 
             tensors.append(tensor)
             gaps.append(float(band_gap))
             groups.append(int(spacegroup))
             material_ids.append(material_id)
+            if is_metal:
+                gap_type = 0
+                gap_type_source = "provider_is_metal"
+            elif is_direct_value is not None:
+                gap_type = 1 if bool(is_direct_value) else 2
+                gap_type_source = "provider_is_direct"
+            else:
+                gap_type = 1 if int(np.argmax(tensor[0, :, 0])) == int(np.argmin(tensor[1, :, 0])) else 2
+                gap_type_source = "derived_from_resampled_extrema"
+            gap_types.append(gap_type)
+            if "k_distances" in grp:
+                raw_k = np.asarray(grp["k_distances"][:], dtype=np.float64)
+                metadata["k_distance_min"] = float(np.min(raw_k))
+                metadata["k_distance_max"] = float(np.max(raw_k))
             sample_metadata.append(
                 {
                     "material_id": material_id,
                     "spacegroup_number": int(spacegroup),
                     "band_gap": float(band_gap),
                     "efermi": efermi,
+                    "source_efermi_absolute": source_efermi_absolute,
+                    "energy_reference": energy_reference,
                     "vbm_band_idx": int(vbm_idx),
                     "cbm_band_idx": int(cbm_idx),
-                    "kpath_labels": _resampled_kpath_labels(metadata, target_k_points),
+                    "gap_type": int(gap_type),
+                    "gap_type_source": gap_type_source,
+                    "metal_label_source": metal_label_source,
+                    "metal_feature_inferred": bool(metal_feature_inferred),
+                    "metal_label_matches_feature": bool(bool(is_metal) == bool(metal_feature_inferred)),
+                    "source": str(metadata.get("source", "unknown")),
+                    "formula_pretty": str(metadata.get("formula_pretty") or ""),
+                    "pearson_symbol": str(metadata.get("pearson_symbol") or ""),
+                    "num_sites": _as_int(metadata.get("num_sites")),
+                    "k_coordinate": "source cumulative path coordinate",
+                    "kpath_labels": resampled_labels,
+                    "segment_ids": segment_ids.tolist(),
                 }
             )
 
@@ -326,7 +565,8 @@ def process_band_data(
         np.stack(tensors, axis=0).astype(np.float32),
         np.asarray(gaps, dtype=np.float32),
         np.asarray(groups, dtype=np.int32),
-        np.asarray(material_ids, dtype="U32"),
+        np.asarray(material_ids, dtype="U64"),
+        np.asarray(gap_types, dtype=np.int32),
         [{"samples": sample_metadata, "skipped": skipped}],
     )
 
@@ -337,62 +577,59 @@ def build_group_ood_split(
     groups: np.ndarray,
     train_size: float = 0.8,
     random_state: int = 42,
+    class_labels: Optional[np.ndarray] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Build an OOD split with no spacegroup overlap.
 
-    Tries stratified group splitting first (each class in both splits).
-    Falls back to plain GroupShuffleSplit if the class distribution makes
-    stratification impossible with group constraint.
+    Candidate group subsets are scored for requested sample fraction and class
+    distribution. The outer contract remains an exact group-disjoint split.
     """
-    rng = np.random.RandomState(random_state)
-
-    # Try class-stratified group split
+    if not 0.0 < train_size < 1.0:
+        raise ValueError("train_size must be between 0 and 1")
+    groups = np.asarray(groups)
+    labels = np.asarray(class_labels if class_labels is not None else (np.asarray(y) > 0.01), dtype=np.int32)
     unique_groups = np.unique(groups)
-    # Group -> list of (index, label)
-    label = np.round(y).astype(int)  # approximate: 0=metal(0), >0=non-metal
-    label[label > 0] = 1  # binarize: metal vs non-metal
-    
-    group_to_indices = {g: np.where(groups == g)[0] for g in unique_groups}
-    group_to_has_metal = {g: int(np.any(label[idx] == 0)) for g, idx in group_to_indices.items()}
-    group_to_has_nonmetal = {g: int(np.any(label[idx] == 1)) for g, idx in group_to_indices.items()}
-    
-    # Shuffle groups
-    group_list = list(unique_groups)
-    rng.shuffle(group_list)
-    
-    n_test_groups_target = max(1, int(len(group_list) * (1 - train_size)))
-    
-    test_groups = []
-    test_has_metal = False
-    test_has_nonmetal = False
-    train_has_metal = False
-    train_has_nonmetal = False
-    
-    # First pass: ensure test gets both classes if possible
-    for g in group_list:
-        if len(test_groups) >= n_test_groups_target:
-            break
-        needed_metal = not test_has_metal and group_to_has_metal[g]
-        needed_nonmetal = not test_has_nonmetal and group_to_has_nonmetal[g]
-        if needed_metal or needed_nonmetal or len(test_groups) < n_test_groups_target:
-            test_groups.append(g)
-            if group_to_has_metal[g]:
-                test_has_metal = True
-            if group_to_has_nonmetal[g]:
-                test_has_nonmetal = True
-    
-    test_set = set(test_groups)
-    train_groups_set = set(g for g in group_list if g not in test_set)
-    
-    # Verify train also has both classes
-    for g in train_groups_set:
-        if group_to_has_metal.get(g, False):
-            train_has_metal = True
-        if group_to_has_nonmetal.get(g, False):
-            train_has_nonmetal = True
+    if len(unique_groups) < 2:
+        raise ValueError("At least two distinct groups are required")
+    rng = np.random.RandomState(random_state)
+    target_test = 1.0 - train_size
+    observed_classes = np.unique(labels)
+    global_dist = np.asarray([np.mean(labels == cls) for cls in observed_classes])
+    best: Optional[Tuple[float, np.ndarray, np.ndarray]] = None
+    group_counts = {group: int(np.sum(groups == group)) for group in unique_groups}
+    target_test_count = target_test * len(groups)
 
-    train_idx = np.concatenate([group_to_indices[g] for g in sorted(train_groups_set)]) if train_groups_set else np.array([], dtype=int)
-    test_idx = np.concatenate([group_to_indices[g] for g in sorted(test_set)]) if test_set else np.array([], dtype=int)
+    for _ in range(max(256, min(2048, len(unique_groups) * 16))):
+        shuffled = rng.permutation(unique_groups)
+        cumulative = np.cumsum([group_counts[group] for group in shuffled])
+        center = int(np.argmin(np.abs(cumulative - target_test_count))) + 1
+        candidate_cuts = {
+            max(1, min(len(shuffled) - 1, center + offset))
+            for offset in range(-3, 4)
+        }
+        for cut in candidate_cuts:
+            test_set = set(shuffled[:cut].tolist())
+            test_idx = np.flatnonzero(np.isin(groups, list(test_set)))
+            train_idx = np.flatnonzero(~np.isin(groups, list(test_set)))
+            if len(train_idx) == 0 or len(test_idx) == 0:
+                continue
+            test_dist = np.asarray([np.mean(labels[test_idx] == cls) for cls in observed_classes])
+            missing = sum(
+                int(not np.any(labels[split] == cls))
+                for cls in observed_classes
+                for split in (train_idx, test_idx)
+            )
+            score = (
+                abs(len(test_idx) / len(groups) - target_test)
+                + 0.35 * float(np.mean(np.abs(test_dist - global_dist)))
+                + 2.0 * missing
+            )
+            if best is None or score < best[0]:
+                best = (score, train_idx, test_idx)
+
+    if best is None:
+        raise RuntimeError("Could not construct a non-empty group split")
+    _, train_idx, test_idx = best
 
     train_groups_set = set(groups[train_idx].tolist()) if len(train_idx) > 0 else set()
     test_groups_set = set(groups[test_idx].tolist()) if len(test_idx) > 0 else set()
@@ -403,24 +640,88 @@ def build_group_ood_split(
     return train_idx, test_idx
 
 
+def build_group_validation_split(
+    groups: np.ndarray,
+    validation_size: float = 0.15,
+    random_state: int = 42,
+    class_labels: Optional[np.ndarray] = None,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Create a group-disjoint inner validation split from outer-training data."""
+    dummy = np.zeros(len(groups), dtype=np.float32)
+    return build_group_ood_split(
+        dummy,
+        dummy,
+        groups,
+        train_size=1.0 - validation_size,
+        random_state=random_state,
+        class_labels=class_labels,
+    )
+
+
+def _sha256_file(path: Optional[str]) -> Optional[str]:
+    if not path or not os.path.isfile(path):
+        return None
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _composition_key(sample: Dict[str, Any]) -> str:
+    formula = str(sample.get("formula_pretty") or "")
+    elements = sorted(set(re.findall(r"[A-Z][a-z]?", formula)))
+    return "-".join(elements) if elements else "unknown"
+
+
+def _prototype_key(sample: Dict[str, Any]) -> str:
+    return "|".join(
+        [
+            str(sample.get("pearson_symbol") or "unknown"),
+            f"sg{sample.get('spacegroup_number', 'unknown')}",
+            f"n{sample.get('num_sites', 'unknown')}",
+        ]
+    )
+
+
+def _count_values(samples: List[Dict[str, Any]], key: str) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for sample in samples:
+        value = str(sample.get(key, "unknown"))
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
 def save_ood_tensors(
     output_dir: str,
     X: np.ndarray,
     y: np.ndarray,
     groups: np.ndarray,
     material_ids: np.ndarray,
+    gap_types: np.ndarray,
     train_idx: np.ndarray,
     test_idx: np.ndarray,
     metadata_bundle: List[Dict[str, Any]],
     target_k_points: int,
     train_size: float,
     random_state: int,
+    source_h5_path: Optional[str] = None,
+    metadata_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     os.makedirs(output_dir, exist_ok=True)
 
     full_npz = os.path.join(output_dir, "band_tensors_full.npz")
     split_npz = os.path.join(output_dir, "band_tensors_ood_split.npz")
     manifest_path = os.path.join(output_dir, "ood_split_manifest.json")
+    samples = metadata_bundle[0]["samples"]
+    if len(samples) != len(X):
+        raise ValueError("metadata sample count must match tensor count")
+    segment_ids = np.asarray(
+        [sample.get("segment_ids", [0] * target_k_points) for sample in samples],
+        dtype=np.int32,
+    )
+    if segment_ids.shape != (len(X), target_k_points):
+        raise ValueError("segment_ids must have shape (N, target_k_points)")
 
     np.savez_compressed(
         full_npz,
@@ -428,6 +729,8 @@ def save_ood_tensors(
         y_gap=y,
         groups=groups,
         material_ids=material_ids,
+        y_type=gap_types,
+        segment_ids=segment_ids,
     )
     np.savez_compressed(
         split_npz,
@@ -435,14 +738,29 @@ def save_ood_tensors(
         y_train=y[train_idx],
         groups_train=groups[train_idx],
         material_ids_train=material_ids[train_idx],
+        y_type_train=gap_types[train_idx],
+        segment_ids_train=segment_ids[train_idx],
         X_test=X[test_idx],
         y_test=y[test_idx],
         groups_test=groups[test_idx],
         material_ids_test=material_ids[test_idx],
+        y_type_test=gap_types[test_idx],
+        segment_ids_test=segment_ids[test_idx],
     )
 
     train_groups = sorted(set(groups[train_idx].tolist()))
     test_groups = sorted(set(groups[test_idx].tolist()))
+    train_samples = [samples[int(index)] for index in train_idx]
+    test_samples = [samples[int(index)] for index in test_idx]
+    train_compositions = {_composition_key(sample) for sample in train_samples}
+    test_compositions = {_composition_key(sample) for sample in test_samples}
+    train_prototypes = {_prototype_key(sample) for sample in train_samples}
+    test_prototypes = {_prototype_key(sample) for sample in test_samples}
+    mismatches = [
+        sample["material_id"]
+        for sample in samples
+        if not bool(sample.get("metal_label_matches_feature", True))
+    ]
     manifest = {
         "target_k_points": target_k_points,
         "tensor_shape": list(X.shape),
@@ -456,7 +774,7 @@ def save_ood_tensors(
             "CBM_k_dist",
         ],
         "band_slots": ["vbm_like", "cbm_like"],
-        "split_method": "StratifiedGroupShuffleSplit",
+        "split_method": "optimized stratified group holdout",
         "group_key": "spacegroup_number",
         "train_size": train_size,
         "random_state": random_state,
@@ -468,8 +786,29 @@ def save_ood_tensors(
         "num_test_groups": int(len(test_groups)),
         "group_overlap": [],
         "class_distribution": {
-            "train": {str(k): int(v) for k, v in zip(*np.unique(y[train_idx].round().astype(int), return_counts=True))},
-            "test": {str(k): int(v) for k, v in zip(*np.unique(y[test_idx].round().astype(int), return_counts=True))},
+            "train": {str(k): int(v) for k, v in zip(*np.unique(gap_types[train_idx], return_counts=True))},
+            "test": {str(k): int(v) for k, v in zip(*np.unique(gap_types[test_idx], return_counts=True))},
+        },
+        "metal_feature_audit": {
+            "inferred_crossing_count": int(sum(bool(s.get("metal_feature_inferred")) for s in samples)),
+            "mismatch_count": int(len(mismatches)),
+            "mismatch_material_ids": mismatches,
+        },
+        "distribution_audit": {
+            "composition_overlap_count": int(len(train_compositions & test_compositions)),
+            "prototype_overlap_count": int(len(train_prototypes & test_prototypes)),
+            "train_source_distribution": _count_values(train_samples, "source"),
+            "test_source_distribution": _count_values(test_samples, "source"),
+        },
+        "provenance": {
+            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "source_h5_path": source_h5_path,
+            "source_h5_sha256": _sha256_file(source_h5_path),
+            "metadata_path": metadata_path,
+            "metadata_sha256": _sha256_file(metadata_path),
+            "builder_sha256": _sha256_file(__file__),
+            "full_npz_sha256": _sha256_file(full_npz),
+            "split_npz_sha256": _sha256_file(split_npz),
         },
         "outputs": {
             "full_npz": full_npz,
@@ -479,7 +818,7 @@ def save_ood_tensors(
         "test_material_ids": material_ids[test_idx].tolist(),
         "train_spacegroups": train_groups,
         "test_spacegroups": test_groups,
-        "samples": metadata_bundle[0]["samples"],
+        "samples": samples,
         "skipped": metadata_bundle[0]["skipped"],
     }
 
@@ -491,15 +830,15 @@ def save_ood_tensors(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build OOD tensors from MP band data")
-    parser.add_argument("--h5", default="./data_cache/mp_bands.h5", help="input HDF5 path")
-    parser.add_argument("--metadata", default="./data_cache/mp_metadata.json", help="metadata JSON path")
-    parser.add_argument("--output", default="./data_cache/ood_tensors", help="output directory")
+    parser.add_argument("--h5", default="./data/raw/materials_project/mp_bands.h5", help="input HDF5 path")
+    parser.add_argument("--metadata", default="./data/raw/materials_project/mp_metadata.json", help="metadata JSON path")
+    parser.add_argument("--output", default="./data/processed/materials_project/ood_tensors", help="output directory")
     parser.add_argument("--target-k", type=int, default=128, help="fixed k-point sequence length")
     parser.add_argument("--train-size", type=float, default=0.8, help="StratifiedGroupShuffleSplit train size")
     parser.add_argument("--random-state", type=int, default=42, help="StratifiedGroupShuffleSplit random seed")
     args = parser.parse_args()
 
-    X, y, groups, material_ids, metadata_bundle = process_band_data(
+    X, y, groups, material_ids, gap_types, metadata_bundle = process_band_data(
         h5_path=args.h5,
         metadata_path=args.metadata,
         target_k_points=args.target_k,
@@ -510,6 +849,7 @@ def main() -> None:
         groups,
         train_size=args.train_size,
         random_state=args.random_state,
+        class_labels=gap_types,
     )
     manifest = save_ood_tensors(
         output_dir=args.output,
@@ -517,12 +857,15 @@ def main() -> None:
         y=y,
         groups=groups,
         material_ids=material_ids,
+        gap_types=gap_types,
         train_idx=train_idx,
         test_idx=test_idx,
         metadata_bundle=metadata_bundle,
         target_k_points=args.target_k,
         train_size=args.train_size,
         random_state=args.random_state,
+        source_h5_path=args.h5,
+        metadata_path=args.metadata,
     )
 
     print("=" * 60)

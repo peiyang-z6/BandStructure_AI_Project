@@ -21,9 +21,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List
 
-import h5py
-
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -46,10 +43,57 @@ def run_command(command: List[str], stage: str) -> None:
     subprocess.run(command, cwd=ROOT, check=True)
 
 
+def build_finetune_command(
+    args: argparse.Namespace,
+    paths: Dict[str, str],
+    ood_split: str,
+) -> List[str]:
+    """Build the supervised command and preserve top-level GPU requirements."""
+    command = [
+        sys.executable,
+        "scripts/finetune_supervised.py",
+        "--tensor-npz",
+        ood_split,
+        "--encoder",
+        paths["ssl_encoder"],
+        "--norm",
+        paths["ssl_norm"],
+        "--epochs",
+        str(args.finetune_epochs),
+        "--batch-size",
+        str(args.finetune_batch_size),
+        "--learning-rate",
+        str(args.learning_rate),
+        "--encoder-learning-rate",
+        str(args.encoder_learning_rate),
+        "--type-weight",
+        str(args.type_weight),
+        "--freeze-layers",
+        str(args.freeze_layers),
+        "--topology-weight",
+        str(args.topology_weight),
+        "--entropy-weight",
+        str(args.entropy_weight),
+        "--extremum-weight",
+        str(args.extremum_weight),
+        "--random-state",
+        str(args.random_state),
+        "--output-dir",
+        paths["finetune_report_dir"],
+        "--checkpoint-dir",
+        paths["finetune_checkpoint_dir"],
+        "--model-path",
+        paths["finetuned_weights"],
+    ]
+    if args.require_gpu:
+        command.append("--require-gpu")
+    return command
+
+
 def remove_path(path: Path) -> None:
     resolved = path.resolve()
     root = ROOT.resolve()
-    if not str(resolved).startswith(str(root)):
+    if resolved != root and root not in resolved.parents:
         raise RuntimeError(f"Refusing to remove outside project root: {resolved}")
     if not path.exists():
         return
@@ -62,30 +106,110 @@ def remove_path(path: Path) -> None:
 def count_h5_samples(h5_path: Path) -> int:
     if not h5_path.exists():
         return 0
+    import h5py
+
     with h5py.File(h5_path, "r") as f:
         return len(f.keys())
 
 
-def required_artifacts() -> Dict[str, str]:
+def validate_download_gate(
+    paths: Dict[str, str],
+    target: int,
+    *,
+    require_report: bool,
+) -> Dict[str, object] | None:
+    """Reject downstream stages unless the canonical cache reached the target."""
+    persisted = count_h5_samples(rel(paths["raw_h5"]))
+    if persisted < target:
+        raise RuntimeError(
+            "Download completion gate failed: persisted "
+            f"{persisted} < requested target {target}"
+        )
+    if not require_report:
+        return None
+
+    report_path = rel(paths["download_report"])
+    if not report_path.exists():
+        raise RuntimeError(
+            f"Download completion gate failed: missing report {report_path}"
+        )
+    with open(report_path, "r", encoding="utf-8") as handle:
+        report = json.load(handle)
+    if not isinstance(report, dict):
+        raise RuntimeError("Download completion gate failed: report is not an object")
+    if report.get("target_reached") is not True:
+        raise RuntimeError(
+            "Download completion gate failed: target_reached=false; "
+            f"termination_reason={report.get('termination_reason')}"
+        )
+    if int(report.get("requested_target", -1)) != int(target):
+        raise RuntimeError(
+            "Download completion gate failed: report requested_target "
+            f"{report.get('requested_target')} != {target}"
+        )
+    if int(report.get("total_cached", -1)) != persisted:
+        raise RuntimeError(
+            "Download completion gate failed: report total_cached "
+            f"{report.get('total_cached')} != persisted {persisted}"
+        )
+    return report
+
+
+def pipeline_layout(source: str = "mp") -> Dict[str, str]:
+    """Return source-isolated paths in the classified project layout."""
+    source_key = source.lower()
+    source_dir = "materials_project" if source_key == "mp" else source_key
+    experiment_id = "aflow_noleak_v4_seed42" if source_key == "aflow" else source_key
+    raw_dir = f"data/raw/{source_dir}"
+    processed_dir = f"data/processed/{source_dir}/ood_tensors"
+    model_dir = f"artifacts/models/{experiment_id}"
+    report_dir = f"artifacts/reports/{experiment_id}"
+    checkpoint_dir = f"artifacts/checkpoints/{experiment_id}"
+    log_dir = f"artifacts/logs/{experiment_id}"
+    is_formal_aflow = source_key == "aflow"
     return {
-        "raw_h5": "data_cache/mp_bands.h5",
-        "metadata": "data_cache/mp_metadata.json",
-        "ood_split": "data_cache/ood_tensors/band_tensors_ood_split.npz",
-        "ood_manifest": "data_cache/ood_tensors/ood_split_manifest.json",
-        "ssl_encoder": "models/ssl_mbm_pretrained.keras",
-        "ssl_norm": "models/ssl_mbm_norm_stats.json",
-        "finetuned_weights": "models/finetuned_gap_predictor.weights.h5",
-        "finetuned_config": "models/finetuned_gap_predictor_config.json",
-        "metrics": "reports/finetune_supervised/metrics_summary.json",
-        "validation_report": "reports/finetune_supervised_report_20260604.md",
-        "vision_detector": "models/vision_detector/band_plot_yolov8_pose_best.pt",
-        "vision_detector_summary": "models/vision_detector/vision_detector_training_summary.json",
+        "raw_h5": f"{raw_dir}/{source_key}_bands.h5",
+        "metadata": f"{raw_dir}/{source_key}_metadata.json",
+        "download_report": f"{raw_dir}/{source_key}_download_report.json",
+        "json_cache": f"{raw_dir}/json_cache",
+        "ood_dir": processed_dir,
+        "ssl_encoder": f"{model_dir}/ssl_mbm_pretrained.keras",
+        "ssl_norm": f"{model_dir}/ssl_mbm_norm_stats.json",
+        "model_dir": model_dir,
+        "finetuned_weights": f"{model_dir}/{'finetuned.weights.h5' if is_formal_aflow else 'finetuned_gap_predictor.weights.h5'}",
+        "finetune_report_dir": report_dir if is_formal_aflow else f"{report_dir}/finetune_supervised",
+        "validation_report": f"{report_dir}/latest_training_report_20260824.md" if is_formal_aflow else f"{report_dir}/finetune_supervised_report.md",
+        "ssl_checkpoint_dir": checkpoint_dir if is_formal_aflow else f"{checkpoint_dir}/ssl_mbm",
+        "finetune_checkpoint_dir": f"{checkpoint_dir}/ft" if is_formal_aflow else f"{checkpoint_dir}/finetune_supervised",
+        "ssl_log_dir": f"{log_dir}/tensorboard" if is_formal_aflow else f"{log_dir}/ssl_mbm",
+        "vision_synthetic_dir": f"data/processed/{source_dir}/vision_synthetic_train",
+        "vision_model_dir": f"{model_dir}/vision_detector",
+        "vision_runs_dir": f"{log_dir}/vision_detector",
+        "manifest": f"{model_dir}/physics_model_brain_manifest.json",
     }
 
 
-def artifact_status() -> Dict[str, Dict[str, object]]:
+def required_artifacts(source: str = "mp") -> Dict[str, str]:
+    paths = pipeline_layout(source)
+    return {
+        "raw_h5": paths["raw_h5"],
+        "metadata": paths["metadata"],
+        "ood_split": f'{paths["ood_dir"]}/band_tensors_ood_split.npz',
+        "ood_manifest": f'{paths["ood_dir"]}/ood_split_manifest.json',
+        "ssl_encoder": paths["ssl_encoder"],
+        "ssl_norm": paths["ssl_norm"],
+        "finetuned_weights": paths["finetuned_weights"],
+        "finetuned_config": paths["finetuned_weights"].replace(".weights.h5", "_config.json"),
+        "metrics": f'{paths["finetune_report_dir"]}/metrics_summary.json',
+        "validation_report": paths["validation_report"],
+        "vision_detector": f'{paths["vision_model_dir"]}/band_plot_yolov8_pose_best.pt',
+        "vision_detector_summary": f'{paths["vision_model_dir"]}/vision_detector_training_summary.json',
+    }
+
+
+def artifact_status(source: str = "mp") -> Dict[str, Dict[str, object]]:
     status: Dict[str, Dict[str, object]] = {}
-    for name, path in required_artifacts().items():
+    for name, path in required_artifacts(source).items():
         full = rel(path)
         status[name] = {
             "path": path,
@@ -95,8 +219,34 @@ def artifact_status() -> Dict[str, Dict[str, object]]:
     return status
 
 
+def validate_pipeline_artifact_gate(
+    source: str,
+    status: Dict[str, Dict[str, object]],
+    *,
+    skip_vision: bool,
+) -> None:
+    required_names = list(required_artifacts(source))
+    if skip_vision:
+        required_names = [
+            name
+            for name in required_names
+            if name not in {"vision_detector", "vision_detector_summary"}
+        ]
+    missing = [
+        name
+        for name in required_names
+        if not bool(status.get(name, {}).get("exists"))
+    ]
+    if missing:
+        raise RuntimeError(
+            "Pipeline artifact gate failed: missing required artifacts: "
+            f"{missing}"
+        )
+
+
 def write_model_brain_manifest(args: argparse.Namespace, status: Dict[str, Dict[str, object]]) -> Path:
-    metrics_path = rel("reports/finetune_supervised/metrics_summary.json")
+    paths = pipeline_layout(args.source)
+    metrics_path = rel(f'{paths["finetune_report_dir"]}/metrics_summary.json')
     metrics = None
     if metrics_path.exists():
         with open(metrics_path, "r", encoding="utf-8") as f:
@@ -105,8 +255,9 @@ def write_model_brain_manifest(args: argparse.Namespace, status: Dict[str, Dict[
     manifest = {
         "created_at": datetime.now().isoformat(),
         "description": "Physics-aware band-structure model brain",
+        "source": args.source,
         "pipeline": [
-            "Materials Project download",
+            f"{args.source.upper()} download",
             "OOD tensor construction grouped by spacegroup_number",
             "Masked Band Modeling SSL pretraining",
             "Supervised fine-tuning for band gap and gap type",
@@ -154,7 +305,7 @@ def write_model_brain_manifest(args: argparse.Namespace, status: Dict[str, Dict[
             "image_size": args.vision_imgsz,
             "device": args.vision_device,
             "base_model": args.vision_base_model,
-            "final_model": "models/vision_detector/band_plot_yolov8_pose_best.pt",
+            "final_model": f'{paths["vision_model_dir"]}/band_plot_yolov8_pose_best.pt',
             "role": "vision front-end localizes band-plot panels and VBM/CBM anchors; the physics brain performs decisions",
         },
         "artifacts": status,
@@ -162,49 +313,64 @@ def write_model_brain_manifest(args: argparse.Namespace, status: Dict[str, Dict[
         "protected_assets": PROTECTED_RELATIVE_PATHS,
     }
 
-    output_path = rel("models/physics_model_brain_manifest.json")
+    output_path = rel(paths["manifest"])
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)
     return output_path
 
 
-def clean_for_fresh_run(clean_raw: bool) -> None:
+def clean_for_fresh_run(source: str, clean_raw: bool) -> None:
+    paths = pipeline_layout(source)
     for path in [
-        rel("data_cache/ood_tensors"),
-        rel("models/ssl_mbm_pretrained.keras"),
-        rel("models/ssl_mbm_final_epoch100.keras"),
-        rel("models/ssl_mbm_norm_stats.json"),
-        rel("models/finetuned_gap_predictor.weights.h5"),
-        rel("models/finetuned_gap_predictor_config.json"),
-        rel("models/physics_model_brain_manifest.json"),
-        rel("checkpoints/ssl_mbm"),
-        rel("checkpoints/finetune_supervised"),
-        rel("logs/ssl_mbm"),
-        rel("reports/finetune_supervised"),
-        rel("reports/finetune_supervised_report_20260604.md"),
+        rel(paths["ood_dir"]),
+        rel(paths["ssl_encoder"]),
+        rel(paths["ssl_norm"]),
+        rel(paths["finetuned_weights"]),
+        rel(paths["finetuned_weights"].replace(".weights.h5", "_config.json")),
+        rel(paths["manifest"]),
+        rel(paths["vision_model_dir"]),
+        rel(paths["ssl_checkpoint_dir"]),
+        rel(paths["finetune_checkpoint_dir"]),
+        rel(paths["ssl_log_dir"]),
+        rel(paths["finetune_report_dir"]),
+        rel(paths["validation_report"]),
+        rel(paths["vision_synthetic_dir"]),
+        rel(paths["vision_runs_dir"]),
     ]:
         remove_path(path)
+    for final_epoch_model in rel(paths["model_dir"]).glob("ssl_mbm_final_epoch*.keras"):
+        remove_path(final_epoch_model)
 
     if clean_raw:
         for path in [
-            rel("data_cache/mp_bands.h5"),
-            rel("data_cache/mp_metadata.json"),
-            rel("data_cache/download_report.json"),
-            rel("data_cache/json_cache"),
+            rel(paths["raw_h5"]),
+            rel(paths["metadata"]),
+            rel(paths["download_report"]),
         ]:
             remove_path(path)
+        if source == "mp":
+            # MP JSON files historically live at the cache root. Keep AFLOW's
+            # nested cache intact when the MP source is rebuilt.
+            cache_root = rel(paths["json_cache"])
+            if cache_root.exists():
+                for cache_file in cache_root.glob("*.json"):
+                    remove_path(cache_file)
+        else:
+            remove_path(rel(paths["json_cache"]))
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run full BandStructure AI training pipeline")
-    parser.add_argument("--target", type=int, default=200, help="minimum raw downloaded sample count")
+    parser.add_argument("--source", choices=("mp", "aflow"), default="mp")
+    parser.add_argument("--target", type=int, default=200, help="minimum total cached sample count")
     parser.add_argument("--target-k", type=int, default=128)
     parser.add_argument("--train-size", type=float, default=0.8)
     parser.add_argument("--random-state", type=int, default=42)
-    parser.add_argument("--min-gap", type=float, default=0.1)
+    parser.add_argument("--min-gap", type=float, default=0.0)
     parser.add_argument("--max-gap", type=float, default=5.0)
     parser.add_argument("--max-sites", type=int, default=50)
+    parser.add_argument("--download-workers", type=int, default=1)
 
     parser.add_argument("--ssl-epochs", type=int, default=100)
     parser.add_argument("--ssl-batch-size", type=int, default=16)
@@ -257,23 +423,30 @@ def main() -> None:
     if not (0.15 <= args.mask_ratio <= 0.30):
         raise ValueError("--mask-ratio must stay between 0.15 and 0.30")
 
+    paths = pipeline_layout(args.source)
     if args.fresh:
-        clean_for_fresh_run(clean_raw=args.clean_raw)
+        clean_for_fresh_run(source=args.source, clean_raw=args.clean_raw)
 
-    status = artifact_status()
+    status = artifact_status(args.source)
     if args.status_only:
         print(json.dumps(status, indent=2, ensure_ascii=False))
         manifest_path = write_model_brain_manifest(args, status)
         print(f"Model brain manifest: {manifest_path}")
         return
 
-    raw_count = count_h5_samples(rel("data_cache/mp_bands.h5"))
+    raw_h5 = paths["raw_h5"]
+    raw_metadata = paths["metadata"]
+    ood_split = f'{paths["ood_dir"]}/band_tensors_ood_split.npz'
+    raw_count = count_h5_samples(rel(raw_h5))
+    download_was_run = False
     if args.force_download or raw_count < args.target:
         run_command(
             [
                 sys.executable,
                 "-m",
                 "src.data.batch_download",
+                "--source",
+                args.source,
                 "--target",
                 str(args.target),
                 "--min-gap",
@@ -282,23 +455,32 @@ def main() -> None:
                 str(args.max_gap),
                 "--max-sites",
                 str(args.max_sites),
+                "--workers",
+                str(args.download_workers),
             ],
-            "Download Materials Project band structures",
+            f"Download {args.source.upper()} band structures",
         )
+        download_was_run = True
     else:
         print(f"[Skip] raw download: {raw_count} samples already available")
 
-    if args.fresh or not rel("data_cache/ood_tensors/band_tensors_ood_split.npz").exists():
+    validate_download_gate(
+        paths,
+        args.target,
+        require_report=download_was_run,
+    )
+
+    if args.fresh or not rel(ood_split).exists():
         run_command(
             [
                 sys.executable,
                 "scripts/build_ood_tensors.py",
                 "--h5",
-                "data_cache/mp_bands.h5",
+                raw_h5,
                 "--metadata",
-                "data_cache/mp_metadata.json",
+                raw_metadata,
                 "--output",
-                "data_cache/ood_tensors",
+                paths["ood_dir"],
                 "--target-k",
                 str(args.target_k),
                 "--train-size",
@@ -311,11 +493,13 @@ def main() -> None:
     else:
         print("[Skip] OOD tensor build: artifact already exists")
 
-    ssl_ready = rel("models/ssl_mbm_pretrained.keras").exists() and rel("models/ssl_mbm_norm_stats.json").exists()
+    ssl_ready = rel(paths["ssl_encoder"]).exists() and rel(paths["ssl_norm"]).exists()
     if args.force_ssl or args.fresh or not ssl_ready:
         command = [
             sys.executable,
             "scripts/train_ssl.py",
+            "--tensor-npz",
+            ood_split,
             "--epochs",
             str(args.ssl_epochs),
             "--batch-size",
@@ -339,11 +523,11 @@ def main() -> None:
             "--strain-scale",
             str(args.strain_scale),
             "--checkpoint-dir",
-            "checkpoints/ssl_mbm",
+            paths["ssl_checkpoint_dir"],
             "--log-dir",
-            "logs/ssl_mbm",
+            paths["ssl_log_dir"],
             "--model-dir",
-            "models",
+            paths["model_dir"],
         ]
         if args.require_gpu:
             command.append("--require-gpu")
@@ -354,49 +538,20 @@ def main() -> None:
         print("[Skip] SSL pretraining: artifacts already exist")
 
     finetune_ready = (
-        rel("models/finetuned_gap_predictor.weights.h5").exists()
-        and rel("reports/finetune_supervised/metrics_summary.json").exists()
+        rel(paths["finetuned_weights"]).exists()
+        and rel(f'{paths["finetune_report_dir"]}/metrics_summary.json').exists()
     )
     if args.force_finetune or args.fresh or not finetune_ready:
         run_command(
-            [
-                sys.executable,
-                "scripts/finetune_supervised.py",
-                "--epochs",
-                str(args.finetune_epochs),
-                "--batch-size",
-                str(args.finetune_batch_size),
-                "--learning-rate",
-                str(args.learning_rate),
-                "--encoder-learning-rate",
-                str(args.encoder_learning_rate),
-                "--type-weight",
-                str(args.type_weight),
-                "--freeze-layers",
-                str(args.freeze_layers),
-                "--topology-weight",
-                str(args.topology_weight),
-                "--entropy-weight",
-                str(args.entropy_weight),
-                "--extremum-weight",
-                str(args.extremum_weight),
-                "--random-state",
-                str(args.random_state),
-                "--output-dir",
-                "reports/finetune_supervised",
-                "--checkpoint-dir",
-                "checkpoints/finetune_supervised",
-                "--model-path",
-                "models/finetuned_gap_predictor.weights.h5",
-            ],
+            build_finetune_command(args, paths, ood_split),
             "Supervised fine-tuning and validation",
         )
     else:
         print("[Skip] fine-tuning: artifacts already exist")
 
     vision_ready = (
-        rel("models/vision_detector/band_plot_yolov8_pose_best.pt").exists()
-        and rel("models/vision_detector/vision_detector_training_summary.json").exists()
+        rel(f'{paths["vision_model_dir"]}/band_plot_yolov8_pose_best.pt').exists()
+        and rel(f'{paths["vision_model_dir"]}/vision_detector_training_summary.json').exists()
     )
     if args.skip_vision:
         print("[Skip] vision detector training: disabled by --skip-vision")
@@ -405,13 +560,13 @@ def main() -> None:
             sys.executable,
             "scripts/train_vision_detector.py",
             "--h5",
-            "data_cache/mp_bands.h5",
+            raw_h5,
             "--synthetic-dir",
-            "data_cache/vision_synthetic_train",
+            paths["vision_synthetic_dir"],
             "--model-dir",
-            "models/vision_detector",
+            paths["vision_model_dir"],
             "--runs-dir",
-            "runs/vision_detector",
+            paths["vision_runs_dir"],
             "--count",
             str(args.vision_count),
             "--epochs",
@@ -439,18 +594,19 @@ def main() -> None:
     else:
         print("[Skip] vision detector training: artifacts already exist")
 
-    status = artifact_status()
-    missing = [name for name, item in status.items() if not item["exists"]]
+    status = artifact_status(args.source)
     manifest_path = write_model_brain_manifest(args, status)
+    validate_pipeline_artifact_gate(
+        args.source,
+        status,
+        skip_vision=args.skip_vision,
+    )
 
     print("\n" + "=" * 80)
     print("Pipeline complete")
     print("=" * 80)
     print(f"Model brain manifest: {manifest_path}")
-    if missing:
-        print(f"[WARN] Missing artifacts: {missing}")
-    else:
-        print("All required model-brain artifacts are present.")
+    print("All required model-brain artifacts are present.")
 
 
 if __name__ == "__main__":

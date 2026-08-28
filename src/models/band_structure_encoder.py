@@ -124,7 +124,7 @@ class BandStructureEncoder(keras.Model):
         x = self.dropout(x, training=training)
 
         for i, transformer_layer in enumerate(self.transformer_layers):
-            attn_output = transformer_layer(x, x, attention_mask=mask)
+            attn_output = transformer_layer(x, x, attention_mask=mask, training=training)
             x = self.add_attn[i]([x, attn_output])
             x = self.ln_attn[i](x)
 
@@ -133,6 +133,24 @@ class BandStructureEncoder(keras.Model):
             x = self.ln_ffn[i](x)
 
         return x
+
+    def build(self, input_shape):
+        """Build every nested layer so Keras exports a materialized model."""
+        sequence_shape = tuple(input_shape[:-1]) + (self.d_model,)
+        self.band_projection.build(input_shape)
+        self.pos_encoding.build(sequence_shape)
+        self.dropout.build(sequence_shape)
+        for index in range(self.num_layers):
+            self.transformer_layers[index].build(sequence_shape, sequence_shape)
+            self.ln_attn[index].build(sequence_shape)
+            self.ln_ffn[index].build(sequence_shape)
+            self.add_attn[index].build([sequence_shape, sequence_shape])
+            self.add_ffn[index].build([sequence_shape, sequence_shape])
+            self.ffn_dense1[index].build(sequence_shape)
+            ffn_shape = tuple(sequence_shape[:-1]) + (self.dff,)
+            self.ffn_dense2[index].build(ffn_shape)
+            self.ffn_dropout[index].build(sequence_shape)
+        super().build(input_shape)
 
     def _feed_forward_network(self, x, layer_idx, training):
         inner_layer = self.ffn_dense1[layer_idx](x)
@@ -204,6 +222,12 @@ class SSLEncoder(keras.Model):
         self.dff = dff
         self.projection_dim = projection_dim
         self.dropout_rate = dropout_rate
+        self.mask_token = self.add_weight(
+            name="mask_token",
+            shape=(num_features,),
+            initializer=keras.initializers.RandomNormal(stddev=0.02),
+            trainable=True,
+        )
 
         self.encoder = BandStructureEncoder(
             num_features=num_features,
@@ -239,10 +263,27 @@ class SSLEncoder(keras.Model):
         projected = self.projection_head(pooled, training=training)
         return projected
 
+    def apply_mask_token(self, x, mask):
+        """Replace masked feature vectors with the learned input token."""
+        x = tf.convert_to_tensor(x, dtype=tf.float32)
+        mask = tf.cast(mask, x.dtype)
+        token = tf.reshape(tf.cast(self.mask_token, x.dtype), [1, 1, self.num_features])
+        return x * (1.0 - mask) + token * mask
+
     def reconstruct(self, x, training=False):
         encoded = self.encoder(x, training=training)
         reconstructed = self.reconstruction_head(encoded)
         return reconstructed
+
+    def build(self, input_shape):
+        """Build encoder and both heads before checkpointing or serialization."""
+        encoded_shape = tuple(input_shape[:-1]) + (self.d_model,)
+        pooled_shape = tuple(input_shape[:1]) + (self.d_model,)
+        self.encoder.build(input_shape)
+        self.pooling.build(encoded_shape)
+        self.projection_head.build(pooled_shape)
+        self.reconstruction_head.build(encoded_shape)
+        super().build(input_shape)
 
     def get_config(self):
         config = super().get_config()

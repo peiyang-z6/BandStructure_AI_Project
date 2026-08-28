@@ -173,10 +173,10 @@ line-mode physics against the trained DFT-derived model brain.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Mine PDF literature figures into experimental band tensors")
     parser.add_argument("--pdf-dir", required=True)
-    parser.add_argument("--output-dir", default="reports/literature_mining")
-    parser.add_argument("--experimental-h5", default="data_cache/experimental_bands.h5")
+    parser.add_argument("--output-dir", default="artifacts/reports/literature_mining")
+    parser.add_argument("--experimental-h5", default="data/raw/experimental/experimental_bands.h5")
     parser.add_argument("--image-height-ev", type=float, default=8.0)
-    parser.add_argument("--detector", default="models/vision_detector/band_plot_yolov8_pose_best.pt")
+    parser.add_argument("--detector", default="artifacts/models/vision_detector/band_plot_yolov8_pose_best.pt")
     parser.add_argument("--detector-conf", type=float, default=0.05)
     return parser.parse_args()
 

@@ -1,0 +1,70 @@
+{
+  "schema_version": 2,
+  "generated_at": "2026-08-24T22:46:04+08:00",
+  "root": "C:/Users/PeiYang/Documents/AI Project/BandStructure AI Project/BandStructure_AI_Project",
+  "outer_entries": ["BandStructure_AI_Project", "资料"],
+  "top_level": [
+    ".git",
+    ".gitignore",
+    "PROJECT_BRAIN",
+    "README.md",
+    "artifacts",
+    "configs",
+    "data",
+    "requirements-dev.txt",
+    "requirements-gpu.txt",
+    "requirements-vision.txt",
+    "requirements.txt",
+    "scripts",
+    "src",
+    "tests"
+  ],
+  "data": {
+    "aflow_canonical_h5_groups": 6443,
+    "aflow_canonical_json": 6443,
+    "aflow_supplemental_h5_groups": 20,
+    "aflow_supplemental_json": 20,
+    "aflow_h5_variants": 2,
+    "materials_project_h5_groups": 12,
+    "materials_project_json": 12,
+    "pre_migration_local_json_verified": 2400,
+    "pre_migration_local_json_missing_or_changed": [],
+    "tensor_shapes": {
+      "X_train": [5153, 2, 128, 3],
+      "X_test": [1288, 2, 128, 3],
+      "groups_train": [5153],
+      "groups_test": [1288],
+      "segment_ids_train": [5153, 128],
+      "segment_ids_test": [1288, 128]
+    },
+    "formal_h5_sha256": "bb261f1e3b3f602e3463ca32831e15b67f53bd5f9f2d951614ec1441b8c0b62d",
+    "full_npz_sha256": "3d6356b1ca4e327ff9efca5126dca792e7cc1b8ee2e65b68f7d6a9947bc18231",
+    "split_npz_sha256": "c6652b857a527cc4f8a389dc0ead14a318350643f5ecb1a65f3d6e17eb6eae59"
+  },
+  "artifacts": {
+    "experiment_id": "aflow_noleak_v4_seed42",
+    "provenance_non_self_files": 33,
+    "non_rewritten_hash_mismatches": [],
+    "formal_model_exists": true,
+    "optional_vision_detector_exists": false
+  },
+  "cleanup": {
+    "deleted_files": 458,
+    "deleted_bytes": 1210262345,
+    "deleted_gib": 1.127,
+    "quarantine_exists": false,
+    "transport_archive_exists": false,
+    "sensitive_temp_scripts": [],
+    "pyc_files": 0
+  },
+  "verification": {
+    "compileall": "passed",
+    "pytest": "39 passed in 41.57s",
+    "latest_model_smoke": "passed",
+    "pipeline_core_artifacts_present": true,
+    "optional_vision_artifacts_present": false,
+    "forbidden_runtime_root_entries": [],
+    "materials_external": true,
+    "all_assertions_passed": true
+  }
+}

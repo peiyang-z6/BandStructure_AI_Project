@@ -9,14 +9,17 @@ Constitution notes:
 from __future__ import annotations
 
 import json
+import math
 import os
+import re
 import time
 from typing import Any, Dict, List, Optional
 
-import h5py
 import numpy as np
 from pymatgen.electronic_structure.core import Spin
 from pymatgen.ext.matproj import MPRester as LegacyMPRester
+
+from .band_store import merge_metadata_json, save_band_record, to_jsonable
 
 try:
     from mp_api.client import MPRester as NewMPRester
@@ -56,6 +59,15 @@ def load_api_keys(env_path: str = "configs/api_keys.env") -> Dict[str, Optional[
     new_key = os.getenv("MP_API_KEY_NEW") or file_values.get("MP_API_KEY_NEW")
     legacy_key = os.getenv("MP_API_KEY_LEGACY") or file_values.get("MP_API_KEY_LEGACY")
 
+    # A 32-character key belongs to the current API even if it was placed in
+    # the legacy slot. Normalize it once and do not initialize the old client.
+    if legacy_key and len(legacy_key.strip()) == 32:
+        new_key = new_key or legacy_key
+        legacy_key = None
+    if new_key and len(new_key.strip()) != 32:
+        legacy_key = legacy_key or new_key
+        new_key = None
+
     default_is_new_key = bool(default_key and len(default_key.strip()) == 32)
 
     if not new_key and default_is_new_key:
@@ -90,8 +102,10 @@ class MPAdapter:
         api_key: Optional[str] = None,
         new_api_key: Optional[str] = None,
         legacy_api_key: Optional[str] = None,
-        cache_dir: str = "./data_cache",
+        cache_dir: str = "./data/raw/materials_project",
         rate_limit_delay: float = 1.0,
+        request_retries: int = 4,
+        retry_base_delay: float = 2.0,
     ):
         if api_key and not new_api_key and len(api_key.strip()) == 32:
             new_api_key = api_key
@@ -103,6 +117,8 @@ class MPAdapter:
         self.legacy_api_key = legacy_api_key
         self.cache_dir = cache_dir
         self.rate_limit_delay = rate_limit_delay
+        self.request_retries = max(1, int(request_retries))
+        self.retry_base_delay = max(0.0, float(retry_base_delay))
         self.json_cache_dir = os.path.join(cache_dir, "json_cache")
 
         os.makedirs(cache_dir, exist_ok=True)
@@ -117,10 +133,32 @@ class MPAdapter:
 
         self.new_rester = None
         if HAS_NEW_API and new_api_key:
-            try:
-                self.new_rester = NewMPRester(new_api_key, mute_progress_bars=True)
-            except Exception as exc:
-                print(f"[WARN] New Materials Project API disabled: {exc}")
+            last_error = None
+            for attempt in range(1, self.request_retries + 1):
+                try:
+                    self.new_rester = NewMPRester(
+                        new_api_key,
+                        mute_progress_bars=True,
+                        timeout=60,
+                    )
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    if attempt < self.request_retries and self._is_transient_error(exc):
+                        delay = self.retry_base_delay * (2 ** (attempt - 1))
+                        print(
+                            f"[WARN] MP client initialization transient failure "
+                            f"({attempt}/{self.request_retries}); retrying in {delay:.1f}s: "
+                            f"{type(exc).__name__}"
+                        )
+                        time.sleep(delay)
+                        continue
+                    break
+            if self.new_rester is None:
+                print(
+                    "[WARN] New Materials Project API disabled: "
+                    f"{type(last_error).__name__}: {last_error}"
+                )
                 if self.legacy_rester is not None:
                     print("[WARN] Falling back to legacy pymatgen MPRester.")
 
@@ -133,6 +171,55 @@ class MPAdapter:
             close = getattr(rester, "close", None)
             if callable(close):
                 close()
+
+    @staticmethod
+    def _is_transient_error(exc: Exception) -> bool:
+        """Identify network/server failures that are safe to retry."""
+        text = f"{type(exc).__name__}: {exc}".lower()
+        return any(
+            token in text
+            for token in (
+                "broken pipe",
+                "connection aborted",
+                "connection reset",
+                "connection error",
+                "connect timeout",
+                "read timeout",
+                "timed out",
+                "temporary failure",
+                "name resolution",
+                "max retries exceeded",
+                "remote disconnected",
+                "service unavailable",
+                "bad gateway",
+                "gateway timeout",
+                "status code 429",
+                "status code 500",
+                "status code 502",
+                "status code 503",
+                "status code 504",
+            )
+        )
+
+    def _call_with_retry(self, operation, label: str):
+        last_error = None
+        request_retries = max(1, int(getattr(self, "request_retries", 1)))
+        retry_base_delay = max(0.0, float(getattr(self, "retry_base_delay", 0.0)))
+        for attempt in range(1, request_retries + 1):
+            try:
+                return operation()
+            except Exception as exc:
+                last_error = exc
+                if attempt >= request_retries or not self._is_transient_error(exc):
+                    raise
+                delay = retry_base_delay * (2 ** (attempt - 1))
+                print(
+                    f"[WARN] {label} transient failure "
+                    f"({attempt}/{request_retries}); retrying in {delay:.1f}s: "
+                    f"{type(exc).__name__}"
+                )
+                time.sleep(delay)
+        raise last_error
 
     def _get_json_cache_path(self, material_id: str) -> str:
         return os.path.join(self.json_cache_dir, f"{material_id}.json")
@@ -185,7 +272,13 @@ class MPAdapter:
     ) -> List[Dict[str, Any]]:
         """Fetch summary metadata used by downloader and spacegroup splitter."""
         safe_query = dict(query_params or {})
+        limit = max(0, int(safe_query.pop("limit", 0) or 0))
+        requested_chunk_size = max(1, int(safe_query.pop("page_size", 1000) or 1000))
         safe_query.pop("has_bandstructure", None)
+        safe_query.setdefault("has_props", ["bandstructure"])
+        # GNoME rows are opt-in for this project until their calculation
+        # provenance and line-mode artifact coverage are audited separately.
+        safe_query.setdefault("include_gnome", False)
 
         if fields is None:
             fields = [
@@ -194,8 +287,11 @@ class MPAdapter:
                 "symmetry",
                 "band_gap",
                 "is_gap_direct",
+                "is_metal",
                 "efermi",
-                "num_sites",
+                # The search filter is named ``num_sites`` but SummaryDoc
+                # exposes the returned field as ``nsites`` in mp-api 0.46+.
+                "nsites",
                 "theoretical",
             ]
 
@@ -204,13 +300,27 @@ class MPAdapter:
 
         try:
             summary = self._get_summary_rester()
-            docs = summary.search(**safe_query, fields=fields)
-        except TypeError as exc:
+            pagination = {}
+            if limit:
+                chunk_size = min(1000, limit, requested_chunk_size)
+                pagination = {
+                    "chunk_size": chunk_size,
+                    "num_chunks": int(math.ceil(limit / chunk_size)),
+                }
+            docs = self._call_with_retry(
+                lambda: summary.search(**safe_query, **pagination, fields=fields),
+                "MP summary query",
+            )
+        except (TypeError, ValueError) as exc:
             cleaned_query = self._drop_unsupported_summary_filters(safe_query)
+            cleaned_query.pop("has_props", None)
             print(f"[WARN] Summary query rejected one filter: {exc}")
             print(f"[WARN] Retrying with: {cleaned_query}")
             summary = self._get_summary_rester()
-            docs = summary.search(**cleaned_query, fields=fields)
+            docs = self._call_with_retry(
+                lambda: summary.search(**cleaned_query, **pagination, fields=fields),
+                "MP summary retry query",
+            )
         except Exception as exc:
             print(f"[ERROR] Metadata query failed: {type(exc).__name__}: {exc}")
             if self.legacy_rester is not None:
@@ -242,9 +352,11 @@ class MPAdapter:
                     "spacegroup_number": sg_number,
                     "band_gap": doc_dict.get("band_gap"),
                     "is_direct": doc_dict.get("is_gap_direct"),
+                    "is_metal": doc_dict.get("is_metal"),
                     "efermi": doc_dict.get("efermi"),
-                    "num_sites": doc_dict.get("num_sites"),
+                    "num_sites": doc_dict.get("nsites", doc_dict.get("num_sites")),
                     "theoretical": doc_dict.get("theoretical"),
+                    "source": "materials_project",
                 }
             )
 
@@ -252,7 +364,7 @@ class MPAdapter:
             print("[WARN] New API returned no metadata; retrying with legacy API.")
             return self._fetch_metadata_legacy(safe_query)
 
-        return metadata_list
+        return metadata_list[:limit] if limit else metadata_list
 
     def _fetch_metadata_legacy(self, query_params: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Fetch metadata through the legacy API when the user has an old key."""
@@ -318,9 +430,11 @@ class MPAdapter:
                     "spacegroup_number": spacegroup_number,
                     "band_gap": doc.get("band_gap"),
                     "is_direct": doc.get("is_gap_direct"),
+                    "is_metal": bool((doc.get("band_gap") or 0.0) <= 0.01),
                     "efermi": doc.get("efermi"),
                     "num_sites": doc.get("nsites"),
                     "theoretical": doc.get("theoretical"),
+                    "source": "materials_project",
                 }
             )
 
@@ -348,6 +462,8 @@ class MPAdapter:
             "is_gap_direct",
             "is_metal",
             "theoretical",
+            "has_props",
+            "include_gnome",
         }
         return {key: value for key, value in query.items() if key in supported}
 
@@ -364,8 +480,13 @@ class MPAdapter:
             if not key.startswith("_") and not callable(getattr(doc, key))
         }
 
-    def fetch_band_structure(self, material_id: str) -> Dict[str, Any]:
+    def fetch_band_structure(
+        self,
+        material_id: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Fetch and parse a line-mode band structure for one material."""
+        del metadata
         cached_data = self._load_from_json_cache(material_id)
         if cached_data:
             return cached_data
@@ -402,12 +523,161 @@ class MPAdapter:
         self._save_to_json_cache(material_id, result)
         return result
 
+    def fetch_band_structures(
+        self,
+        metadata_list: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Fetch a small MP batch through one registered Delta table.
+
+        The public MP client queries the same remote Delta table for every
+        material. Grouping task identifiers in one SQL ``IN`` query avoids
+        repeatedly scanning that table and is both faster and much less
+        memory-intensive than creating one client per worker.
+        """
+        results: Dict[str, Dict[str, Any]] = {}
+        missing_ids = []
+        for metadata in metadata_list:
+            material_id = str(metadata["material_id"])
+            cached = self._load_from_json_cache(material_id)
+            if cached is not None:
+                results[material_id] = cached
+            else:
+                missing_ids.append(material_id)
+
+        if missing_ids and self.new_rester is not None:
+            try:
+                results.update(self._fetch_band_structures_new_api_batch(missing_ids))
+            except Exception as exc:
+                print(
+                    "[WARN] MP batch band query failed; falling back to stable "
+                    f"single-material queries: {type(exc).__name__}: {exc}"
+                )
+
+        ordered = []
+        for metadata in metadata_list:
+            material_id = str(metadata["material_id"])
+            result = results.get(material_id)
+            if result is None:
+                result = self.fetch_band_structure(material_id, metadata=metadata)
+            ordered.append(result)
+        return ordered
+
+    def _fetch_band_structures_new_api_batch(
+        self,
+        material_ids: List[str],
+    ) -> Dict[str, Dict[str, Any]]:
+        from emmet.core.band_theory import ElectronicBS
+        from pymatgen.electronic_structure.bandstructure import (
+            BandStructure,
+            BandStructureSymmLine,
+        )
+
+        materials = getattr(self.new_rester, "materials", None)
+        electronic_structure = getattr(materials, "electronic_structure", None)
+        band_rester = getattr(
+            materials, "electronic_structure_bandstructure", None
+        )
+        if electronic_structure is None or band_rester is None:
+            raise RuntimeError("Installed mp-api client has no batch band routes")
+
+        docs = self._call_with_retry(
+            lambda: electronic_structure.search(
+                material_ids=material_ids,
+                fields=["material_id", "bandstructure"],
+                chunk_size=max(1, len(material_ids)),
+                num_chunks=1,
+            ),
+            "MP electronic-structure lookup",
+        )
+
+        task_to_material: Dict[str, str] = {}
+        unavailable: set[str] = set(material_ids)
+        for doc in docs:
+            payload = self._doc_to_dict(doc)
+            material_id = str(payload.get("material_id", ""))
+            band_summary = payload.get("bandstructure") or {}
+            if hasattr(band_summary, "model_dump"):
+                band_summary = band_summary.model_dump()
+            path_summary = (
+                band_summary.get("setyawan_curtarolo")
+                if isinstance(band_summary, dict)
+                else None
+            ) or {}
+            if hasattr(path_summary, "model_dump"):
+                path_summary = path_summary.model_dump()
+            task_id = str(path_summary.get("task_id") or "")
+            task_identifier = task_id.split("-")[-1]
+            if material_id and re.fullmatch(r"[A-Za-z0-9]+", task_identifier):
+                task_to_material[task_identifier] = material_id
+                unavailable.discard(material_id)
+
+        results = {
+            material_id: {
+                "material_id": material_id,
+                "error": "line-mode band structure unavailable",
+            }
+            for material_id in unavailable
+        }
+        if not task_to_material:
+            return results
+
+        label, _ = band_rester._get_delta_table(
+            "materialsproject-parsed",
+            "core/electronic-structure/bandstructures/",
+            label="bandstructure",
+        )
+        identifiers = ",".join(
+            f"'{identifier}'" for identifier in task_to_material
+        )
+        query = (
+            f"SELECT * FROM {label} "
+            f"WHERE identifier IN ({identifiers}) "
+            "AND path_convention='setyawan_curtarolo'"
+        )
+        table = self._call_with_retry(
+            lambda: band_rester._query_delta_single(query),
+            "MP batch Delta query",
+        )
+
+        returned_materials: set[str] = set()
+        for row in table.to_pylist(maps_as_pydicts="strict"):
+            identifier = str(row.get("identifier", ""))
+            material_id = task_to_material.get(identifier)
+            if material_id is None:
+                continue
+            emmet_bs = ElectronicBS(**row)
+            bs_obj = emmet_bs.to_pmg(
+                pmg_cls=(
+                    BandStructureSymmLine if emmet_bs.labels_dict else BandStructure
+                )
+            )
+            if not getattr(bs_obj, "branches", None):
+                results[material_id] = {
+                    "material_id": material_id,
+                    "error": "line-mode band structure unavailable",
+                }
+                continue
+            parsed = self._parse_band_structure(material_id, bs_obj)
+            self._save_to_json_cache(material_id, parsed)
+            results[material_id] = parsed
+            returned_materials.add(material_id)
+
+        for material_id in set(task_to_material.values()) - returned_materials:
+            results[material_id] = {
+                "material_id": material_id,
+                "error": "line-mode band structure unavailable",
+            }
+        return results
+
     def _fetch_band_structure_new_api(self, material_id: str):
         try:
             if hasattr(self.new_rester, "get_bandstructure_by_material_id"):
                 return (
-                    self.new_rester.get_bandstructure_by_material_id(
-                        material_id, line_mode=True
+                    self._call_with_retry(
+                        lambda: self.new_rester.get_bandstructure_by_material_id(
+                            material_id, line_mode=True
+                        ),
+                        f"MP band query {material_id}",
                     ),
                     None,
                 )
@@ -492,7 +762,12 @@ class MPAdapter:
 
         return {
             "material_id": material_id,
+            "source": "materials_project",
             "kpoints": kpoints,
+            "k_distances": np.asarray(
+                getattr(bs_obj, "distance", np.arange(len(bs_obj.kpoints))),
+                dtype=np.float32,
+            ),
             "energies": energies,
             "efermi": float(bs_obj.efermi),
             "kpath_labels": labels,
@@ -502,57 +777,11 @@ class MPAdapter:
             "num_kpoints": int(energies.shape[-1]),
         }
 
-    def save_to_hdf5(self, bs_data: Dict[str, Any]) -> None:
+    def save_to_hdf5(self, bs_data: Dict[str, Any]) -> Any:
         """Append one parsed band structure to mp_bands.h5 atomically per group."""
-        material_id = bs_data["material_id"]
         h5_path = os.path.join(self.cache_dir, "mp_bands.h5")
-
-        with h5py.File(h5_path, "a") as f:
-            if material_id in f:
-                del f[material_id]
-
-            grp = f.create_group(material_id)
-            for key, value in bs_data.items():
-                if key == "metadata":
-                    meta_grp = grp.create_group("metadata")
-                    for meta_key, meta_value in value.items():
-                        if meta_value is not None:
-                            meta_grp.attrs[meta_key] = meta_value
-                            grp.attrs[meta_key] = meta_value
-                    if value.get("spacegroup_number") is not None:
-                        grp.attrs["spacegroup"] = value["spacegroup_number"]
-                    if value.get("is_direct") is not None:
-                        grp.attrs["is_direct"] = value["is_direct"]
-                    continue
-
-                if key == "kpath_labels":
-                    grp.attrs[key] = json.dumps(self._to_jsonable(value), ensure_ascii=False)
-                    continue
-
-                if isinstance(value, np.ndarray):
-                    grp.create_dataset(key, data=value)
-                elif isinstance(value, (list, tuple, dict)):
-                    grp.attrs[key] = json.dumps(self._to_jsonable(value), ensure_ascii=False)
-                elif value is not None:
-                    grp.attrs[key] = value
+        return save_band_record(h5_path, bs_data)
 
     def save_metadata_to_json(self, metadata_list: List[Dict[str, Any]]) -> None:
         """Save metadata list without duplicating material IDs."""
-        json_path = os.path.join(self.cache_dir, "mp_metadata.json")
-        existing: List[Dict[str, Any]] = []
-
-        if os.path.exists(json_path):
-            with open(json_path, "r", encoding="utf-8") as f:
-                existing = json.load(f)
-
-        by_id = {item["material_id"]: item for item in existing if item.get("material_id")}
-        for item in metadata_list:
-            material_id = item.get("material_id")
-            if material_id:
-                by_id[material_id] = item
-
-        merged = list(by_id.values())
-        tmp_path = json_path + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(merged, f, indent=2, ensure_ascii=False)
-        os.replace(tmp_path, json_path)
+        merge_metadata_json(os.path.join(self.cache_dir, "mp_metadata.json"), metadata_list)

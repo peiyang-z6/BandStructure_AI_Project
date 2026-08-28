@@ -10,7 +10,7 @@ This script CLOSES THE TRAINING LOOP:
   GUI Training Mode → JSON annotations → YOLO dataset → Fine-tuned model
 
 Workflow:
-  1. Read annotation JSONs from data_cache/human_annotations/
+  1. Read annotation JSONs from data/annotations/human/
   2. For each annotation with a valid source image + canvas metadata:
      a. Resize source image to match canvas dimensions (annotations are in canvas coords)
      b. Normalize panel bbox and VBM/CBM keypoints to YOLO [0,1] format
@@ -47,10 +47,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 # ── Paths ──────────────────────────────────────────────────────────────────
-ANNOTATIONS_DIR = ROOT / "data_cache" / "human_annotations"
-YOLO_DATASET_DIR = ROOT / "data_cache" / "yolo_human_train"
-BASE_MODEL = ROOT / "models" / "vision_detector" / "band_plot_yolov8_pose_best.pt"
-OUTPUT_MODEL_DIR = ROOT / "models" / "vision_detector"
+ANNOTATIONS_DIR = ROOT / "data" / "annotations" / "human"
+YOLO_DATASET_DIR = ROOT / "data" / "processed" / "vision" / "yolo_human_train"
+BASE_MODEL = ROOT / "artifacts" / "models" / "vision_detector" / "band_plot_yolov8_pose_best.pt"
+OUTPUT_MODEL_DIR = ROOT / "artifacts" / "models" / "vision_detector"
 
 # YOLO class: band_plot panel
 CLASS_ID = 0
@@ -185,10 +185,18 @@ def build_yolo_dataset(
 
     # If we have enough records, create a val split
     rng = np.random.RandomState(seed)
-    indices = list(range(len(records)))
-    rng.shuffle(indices)
-    n_val = max(1, int(len(records) * val_split))
-    val_idx = set(indices[:n_val])
+    source_groups: Dict[str, List[int]] = {}
+    for index, record in enumerate(records):
+        source_key = str(Path(record.get("source_image_path", f"record-{index}")).resolve())
+        source_groups.setdefault(source_key, []).append(index)
+    shuffled_groups = list(source_groups)
+    rng.shuffle(shuffled_groups)
+    target_val = max(1, int(round(len(records) * val_split)))
+    val_idx = set()
+    for source_key in shuffled_groups:
+        if len(val_idx) >= target_val:
+            break
+        val_idx.update(source_groups[source_key])
 
     has_val = len(records) >= 5
     if has_val:
@@ -475,7 +483,7 @@ def main() -> None:
     print(f"  Dataset         : {output_dir}")
     print()
     print("  Next steps:")
-    print(f"    1. Copy {final_model.name} to models/vision_detector/")
+    print(f"    1. Copy {final_model.name} to artifacts/models/vision_detector/")
     print(f"    2. Update DETECTOR_PATH in gui_workbench.py if needed")
     print(f"    3. Re-run the GUI to use the human-fine-tuned detector")
 

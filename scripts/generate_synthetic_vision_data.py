@@ -16,8 +16,8 @@ from src.vision.synthetic_data_generator import SyntheticBandPlotGenerator, Synt
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate degraded synthetic band-plot data with YOLO/COCO labels")
-    parser.add_argument("--h5", default="data_cache/mp_bands.h5")
-    parser.add_argument("--output-dir", default="data_cache/vision_synthetic")
+    parser.add_argument("--h5", default="data/raw/materials_project/mp_bands.h5")
+    parser.add_argument("--output-dir", default="data/processed/vision/synthetic")
     parser.add_argument("--count", type=int, default=5000)
     parser.add_argument("--random-state", type=int, default=42)
     parser.add_argument("--train-yolo", action="store_true", help="Optionally run YOLOv8 pose training if ultralytics is installed")

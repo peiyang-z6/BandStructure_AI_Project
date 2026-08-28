@@ -6,9 +6,9 @@ Combines Materials Project metadata + PhysicsBrain predictions to produce a
 comprehensive material classification from a band structure image.
 
 Data sources (in priority order):
-  1. Materials Project metadata cache (data_cache/mp_metadata.json) — 36,550 entries
+  1. Materials Project metadata cache (data/raw/materials_project/mp_metadata.json) — 36,550 entries
      → formula_pretty, spacegroup_number, band_gap, is_direct, num_sites
-  2. Local OOD manifest (data_cache/ood_tensors/ood_split_manifest.json) — 200 entries
+  2. Local OOD manifest (data/processed/materials_project/ood_tensors/ood_split_manifest.json) — 200 entries
      → material_id, spacegroup_number, band_gap
   3. PhysicsBrain inference (gap, direct/indirect, effective mass)
      → physics-based crystal type classification
@@ -343,7 +343,7 @@ class MaterialClassifier:
     def _load_metadata(self):
         """Load metadata caches."""
         # Materials Project metadata
-        mp_path = Path(__file__).resolve().parents[2] / "data_cache" / "mp_metadata.json"
+        mp_path = Path(__file__).resolve().parents[2] / "data" / "raw" / "materials_project" / "mp_metadata.json"
         try:
             data = json.loads(mp_path.read_text(encoding="utf-8"))
             if isinstance(data, list):
@@ -355,7 +355,7 @@ class MaterialClassifier:
             pass
 
         # Local OOD manifest
-        manifest_path = Path(__file__).resolve().parents[2] / "data_cache" / "ood_tensors" / "ood_split_manifest.json"
+        manifest_path = Path(__file__).resolve().parents[2] / "data" / "processed" / "materials_project" / "ood_tensors" / "ood_split_manifest.json"
         try:
             man = json.loads(manifest_path.read_text(encoding="utf-8"))
             for s in man.get("samples", []):
@@ -439,8 +439,10 @@ class MaterialClassifier:
         confidence_parts.append(0.80)  # physics-based inference
 
         # ── Compute overall confidence ──
-        result.confidence = float(np.mean([c for c in confidence_parts if c > 0]) if any(
-            c > 0 for c in confidence_parts) else 0.0)
+        # Unknown fields must lower the aggregate rather than disappear from the
+        # denominator; otherwise a result with no material metadata can appear
+        # deceptively high-confidence from physics heuristics alone.
+        result.confidence = float(np.mean(confidence_parts)) if confidence_parts else 0.0
 
         return result
 

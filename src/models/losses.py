@@ -37,18 +37,25 @@ class BandCurvatureLoss(keras.losses.Loss):
         super().__init__(name=name)
         self.temperature = float(temperature)
 
-    def second_derivative(self, energy: tf.Tensor) -> tf.Tensor:
+    def second_derivative(self, energy: tf.Tensor, segment_ids: tf.Tensor | None = None) -> tf.Tensor:
         second = energy[:, 2:] - 2.0 * energy[:, 1:-1] + energy[:, :-2]
+        if segment_ids is not None:
+            segments = tf.cast(segment_ids, tf.int32)
+            valid = tf.logical_and(
+                segments[:, :-2] == segments[:, 1:-1],
+                segments[:, 1:-1] == segments[:, 2:],
+            )
+            second = second * tf.cast(valid, second.dtype)
         return tf.pad(second, [[0, 0], [1, 1]])
 
-    def call(self, y_true, y_pred):
+    def call(self, y_true, y_pred, segment_ids=None):
         del y_true
         features_per_band = tf.shape(y_pred)[-1] // 2
         vbm_energy = y_pred[:, :, 0]
         cbm_energy = y_pred[:, :, features_per_band]
 
-        vbm_curv = self.second_derivative(vbm_energy)
-        cbm_curv = self.second_derivative(cbm_energy)
+        vbm_curv = self.second_derivative(vbm_energy, segment_ids=segment_ids)
+        cbm_curv = self.second_derivative(cbm_energy, segment_ids=segment_ids)
 
         tau = tf.cast(tf.maximum(self.temperature, 1e-6), y_pred.dtype)
         vbm_weights = tf.nn.softmax(vbm_energy / tau, axis=1)
@@ -74,11 +81,18 @@ class CurvatureConsistencyLoss(keras.losses.Loss):
     def __init__(self, name: str = "curvature_consistency_loss"):
         super().__init__(name=name)
 
-    def second_derivative(self, energy: tf.Tensor) -> tf.Tensor:
+    def second_derivative(self, energy: tf.Tensor, segment_ids: tf.Tensor | None = None) -> tf.Tensor:
         second = energy[:, 2:] - 2.0 * energy[:, 1:-1] + energy[:, :-2]
+        if segment_ids is not None:
+            segments = tf.cast(segment_ids, tf.int32)
+            valid = tf.logical_and(
+                segments[:, :-2] == segments[:, 1:-1],
+                segments[:, 1:-1] == segments[:, 2:],
+            )
+            second = second * tf.cast(valid, second.dtype)
         return tf.pad(second, [[0, 0], [1, 1]])
 
-    def call(self, y_true, y_pred):
+    def call(self, y_true, y_pred, segment_ids=None):
         del y_true
         features_per_band = tf.shape(y_pred)[-1] // 2
         vbm_energy = y_pred[:, :, 0]
@@ -86,9 +100,24 @@ class CurvatureConsistencyLoss(keras.losses.Loss):
         cbm_energy = y_pred[:, :, features_per_band]
         cbm_curv_channel = y_pred[:, :, features_per_band + 1]
 
+        vbm_diff = tf.square(
+            vbm_curv_channel - self.second_derivative(vbm_energy, segment_ids=segment_ids)
+        )
+        cbm_diff = tf.square(
+            cbm_curv_channel - self.second_derivative(cbm_energy, segment_ids=segment_ids)
+        )
+        if segment_ids is None:
+            return 0.5 * (tf.reduce_mean(vbm_diff) + tf.reduce_mean(cbm_diff))
+        segments = tf.cast(segment_ids, tf.int32)
+        valid_inner = tf.logical_and(
+            segments[:, :-2] == segments[:, 1:-1],
+            segments[:, 1:-1] == segments[:, 2:],
+        )
+        valid = tf.pad(tf.cast(valid_inner, y_pred.dtype), [[0, 0], [1, 1]])
+        denom = tf.reduce_sum(valid) + 1e-8
         return 0.5 * (
-            tf.reduce_mean(tf.square(vbm_curv_channel - self.second_derivative(vbm_energy)))
-            + tf.reduce_mean(tf.square(cbm_curv_channel - self.second_derivative(cbm_energy)))
+            tf.reduce_sum(vbm_diff * valid) / denom
+            + tf.reduce_sum(cbm_diff * valid) / denom
         )
 
 

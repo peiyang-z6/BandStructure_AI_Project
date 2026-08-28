@@ -4,7 +4,7 @@ SSL Training Main Script
 
 Default path: Masked Band Modeling (MBM) on the cleaned OOD tensor dataset.
 
-Input tensor convention from data_cache/ood_tensors/band_tensors_ood_split.npz:
+Input tensor convention from data/processed/materials_project/ood_tensors/band_tensors_ood_split.npz:
     X_*: (N, 2, seq_len, 3)
         band slot 0: VBM-like band
         band slot 1: CBM-like band
@@ -33,6 +33,7 @@ from tensorflow import keras
 from src.data.band_structure_dataset import VirtualStrainAugmentation
 from src.engine.ssl_trainer import MBMTrainer as PhysicsMBMTrainer
 from src.models.band_structure_encoder import SSLEncoder
+from src.data.ood_tensor_builder import build_group_validation_split
 
 
 def configure_tensorflow_runtime(require_gpu: bool = False) -> None:
@@ -57,18 +58,38 @@ def configure_tensorflow_runtime(require_gpu: bool = False) -> None:
         )
 
 
-def load_ood_tensor_data(npz_path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def load_ood_tensor_data(
+    npz_path: str,
+    validation_size: float = 0.15,
+    random_state: int = 42,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     data = np.load(npz_path)
-    X_train = data["X_train"].astype(np.float32)
-    X_val = data["X_test"].astype(np.float32)
-    groups_train = data["groups_train"].astype(np.int32)
-    groups_val = data["groups_test"].astype(np.int32)
+    X_outer_train = data["X_train"].astype(np.float32)
+    groups_outer_train = data["groups_train"].astype(np.int32)
+    segment_outer_train = (
+        data["segment_ids_train"].astype(np.int32)
+        if "segment_ids_train" in data
+        else np.zeros((len(X_outer_train), X_outer_train.shape[2]), dtype=np.int32)
+    )
+    type_labels = data["y_type_train"].astype(np.int32) if "y_type_train" in data else None
+    fit_idx, val_idx = build_group_validation_split(
+        groups_outer_train,
+        validation_size=validation_size,
+        random_state=random_state,
+        class_labels=type_labels,
+    )
+    X_train = X_outer_train[fit_idx]
+    X_val = X_outer_train[val_idx]
+    groups_train = groups_outer_train[fit_idx]
+    groups_val = groups_outer_train[val_idx]
+    segments_train = segment_outer_train[fit_idx]
+    segments_val = segment_outer_train[val_idx]
 
     # (N, 2, K, C) -> (N, K, 2*C)
     X_train = np.transpose(X_train, (0, 2, 1, 3)).reshape(X_train.shape[0], X_train.shape[2], -1)
     X_val = np.transpose(X_val, (0, 2, 1, 3)).reshape(X_val.shape[0], X_val.shape[2], -1)
 
-    return X_train, X_val, groups_train, groups_val
+    return X_train, X_val, groups_train, groups_val, segments_train, segments_val
 
 
 def standardize_features(
@@ -88,45 +109,53 @@ def standardize_features(
 def make_tensor_dataset(
     X: np.ndarray,
     groups: np.ndarray,
+    segment_ids: np.ndarray,
     batch_size: int,
     shuffle: bool,
     augment: bool = False,
     strain_scale: float = 0.01,
 ) -> tf.data.Dataset:
-    dataset = tf.data.Dataset.from_tensor_slices((X, groups))
+    dataset = tf.data.Dataset.from_tensor_slices((X, groups, segment_ids))
     if shuffle:
         dataset = dataset.shuffle(buffer_size=len(X), reshuffle_each_iteration=True)
     if augment:
         strain = VirtualStrainAugmentation(strain_scale=strain_scale)
 
-        def apply_strain(sequence, group):
-            return strain(sequence), group
+        def apply_strain(sequence, group, segments):
+            return strain(sequence), group, segments
 
         dataset = dataset.map(apply_strain, num_parallel_calls=tf.data.AUTOTUNE)
     return dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
 
 def run_tensor_mbm(args: argparse.Namespace) -> None:
-    X_train, X_val, groups_train, groups_val = load_ood_tensor_data(args.tensor_npz)
+    X_train, X_val, groups_train, groups_val, segments_train, segments_val = load_ood_tensor_data(
+        args.tensor_npz,
+        validation_size=args.validation_size,
+        random_state=args.random_state,
+    )
     X_train, X_val, norm_stats = standardize_features(X_train, X_val)
 
     seq_len = X_train.shape[1]
     num_features = X_train.shape[2]
 
-    print("Loaded OOD tensors:")
-    print(f"  train: {X_train.shape}, groups={len(set(groups_train.tolist()))}")
-    print(f"  val:   {X_val.shape}, groups={len(set(groups_val.tolist()))}")
+    print("Loaded outer-training tensors (outer OOD test remains untouched):")
+    print(f"  inner train: {X_train.shape}, groups={len(set(groups_train.tolist()))}")
+    print(f"  inner val:   {X_val.shape}, groups={len(set(groups_val.tolist()))}")
     print(f"  group overlap: {set(groups_train.tolist()).intersection(set(groups_val.tolist()))}")
 
     train_ds = make_tensor_dataset(
         X_train,
         groups_train,
+        segments_train,
         args.batch_size,
         shuffle=True,
         augment=not args.disable_strain_augmentation,
         strain_scale=args.strain_scale,
     )
-    val_ds = make_tensor_dataset(X_val, groups_val, args.batch_size, shuffle=False)
+    val_ds = make_tensor_dataset(
+        X_val, groups_val, segments_val, args.batch_size, shuffle=False
+    )
 
     model = SSLEncoder(
         num_features=num_features,
@@ -148,11 +177,21 @@ def run_tensor_mbm(args: argparse.Namespace) -> None:
         consistency_weight=args.consistency_weight,
         checkpoint_dir=args.checkpoint_dir,
         log_dir=args.log_dir,
+        min_span=args.min_span,
+        max_span=args.max_span,
+        min_learning_rate=args.min_learning_rate,
+        warmup_epochs=args.warmup_epochs,
+        gradient_clip_norm=args.gradient_clip_norm,
+        early_stopping_patience=args.early_stopping_patience,
+        early_stopping_min_delta=args.early_stopping_min_delta,
     )
+    if args.resume:
+        trainer.restore_checkpoint("last")
     trainer.train(train_ds, val_ds, epochs=args.epochs)
 
     os.makedirs(args.model_dir, exist_ok=True)
-    final_model_path = os.path.join(args.model_dir, f"ssl_mbm_final_epoch{args.epochs}.keras")
+    completed_epochs = int(trainer.epoch_var.numpy())
+    final_model_path = os.path.join(args.model_dir, f"ssl_mbm_final_epoch{completed_epochs}.keras")
     model.save(final_model_path)
 
     best_checkpoint = os.path.join(args.checkpoint_dir, "ckpt-best")
@@ -170,11 +209,19 @@ def run_tensor_mbm(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Band structure SSL pre-training")
-    parser.add_argument("--tensor-npz", default="./data_cache/ood_tensors/band_tensors_ood_split.npz")
+    parser.add_argument("--tensor-npz", default="./data/processed/materials_project/ood_tensors/band_tensors_ood_split.npz")
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--mask-ratio", type=float, default=0.2)
+    parser.add_argument("--min-span", type=int, default=5)
+    parser.add_argument("--max-span", type=int, default=15)
+    parser.add_argument("--min-learning-rate", type=float, default=1e-6)
+    parser.add_argument("--warmup-epochs", type=int, default=5)
+    parser.add_argument("--gradient-clip-norm", type=float, default=1.0)
+    parser.add_argument("--early-stopping-patience", type=int, default=15)
+    parser.add_argument("--early-stopping-min-delta", type=float, default=1e-5)
+    parser.add_argument("--resume", action="store_true")
     parser.add_argument("--sign-weight", type=float, default=0.5)
     parser.add_argument("--consistency-weight", type=float, default=0.1)
     parser.add_argument("--d-model", type=int, default=128)
@@ -185,10 +232,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--strain-scale", type=float, default=0.01)
     parser.add_argument("--disable-strain-augmentation", action="store_true")
-    parser.add_argument("--checkpoint-dir", default="./checkpoints/ssl_mbm")
-    parser.add_argument("--log-dir", default="./logs/ssl_mbm")
-    parser.add_argument("--model-dir", default="./models")
+    parser.add_argument("--checkpoint-dir", default="./artifacts/checkpoints/mp/ssl_mbm")
+    parser.add_argument("--log-dir", default="./artifacts/logs/mp/ssl_mbm")
+    parser.add_argument("--model-dir", default="./artifacts/models/mp")
     parser.add_argument("--require-gpu", action="store_true")
+    parser.add_argument("--validation-size", type=float, default=0.15)
+    parser.add_argument("--random-state", type=int, default=42)
     return parser.parse_args()
 
 

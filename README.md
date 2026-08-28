@@ -1,177 +1,243 @@
 # BandStructure AI Project
 
-Physics-aware deep learning pipeline for crystal band-structure analysis,
-with a native GUI workbench for human-in-the-loop Plot-to-Physics inference.
+面向晶体能带结构的物理约束深度学习项目。项目大方向保持不变：
 
-## Quick Start
-
-```powershell
-conda activate bandstructure_ai_project
-
-# Launch the GUI workbench (human-in-the-loop annotation + Physics Brain)
-python scripts\gui_workbench.py
-
-# Run the full pipeline (download → OOD tensors → SSL → finetune)
-python scripts\run_full_pipeline.py
-
-# Train vision detector from human annotations
-python scripts\train_from_human_annotations.py --epochs 50
+```text
+完整 line-mode E(k)
+  → (N, 2, 128, 3) 6D 物理张量
+  → Masked Band Modeling 自监督预训练
+  → 带隙回归 + metal/direct/indirect 分类
+  → tkinter Plot-to-Physics 工作台
 ```
 
-## Project Layout
+后续经批准的扩展方向是**在现有链路上**增加 crystal graph → multi-band Eₙ(k)、DFT 质检/相似检索和不确定性主动学习，不建立并列冗余框架。
+
+## 30k 正式状态（任务日期 2026-08-25，跨午夜完成）
+
+最新已接受实验：`aflow_noleak_v5_30k_seed42`。30k immutable raw、no-leak tensor、GPU-only SSL/监督训练、outer OOD、回传哈希与本地模型 smoke 均已完成；完整报告：
+
+`artifacts/reports/aflow_noleak_v5_30k_seed42/latest_training_report_20260825.md`
+
+| 项目 | v5 正式验收 |
+|---|---:|
+| AFLOW raw HDF5 / raw JSON | 30,000 / 30,000 |
+| Raw HDF5 SHA-256 | `d9927f0425de6232a24b8cea2eb8d0c5820e0aa9e29222b7feb621ebc7be08f3` |
+| 有效 no-leak 张量 | 29,952（跳过 48） |
+| Outer train/test | 23,933 / 6,019 |
+| Train/test space groups / overlap | 161 / 45 / **0** |
+| SSL best / stopped | epoch 39 / 54 |
+| Supervised inner best / completed | epoch 52 / 60 |
+| Outer line-mode gap MAE / RMSE | **0.000352 / 0.000595 eV** |
+| Outer model-vs-global-DFT gap MAE | **0.640281 eV** |
+| Type accuracy / Macro F1 | **0.941186 / 0.932648** |
+| GPU evidence | Tesla V100；max 89%；15,114 MiB；无 CPU fallback |
+
+v5 raw 位于 `data/raw/aflow/snapshots/aflow_30000_20260825/`。历史 v4 6,443 byte-identical raw、张量和训练 artifacts 全部保留为可复现基线，未被覆盖。
+
+## 未来下载任务可靠性治理（2026-08-26）
+
+本轮只原地加固现有 `BandStore` / `RobustBandDownloader` / full pipeline，不重新下载数据、不重建张量、不重训模型：
+
+- canonical HDF5 使用稳定物理语义 hash 与跨进程 single-writer lock；真实 v4/v5 legacy schema 可幂等读取，identity/provenance、`source_efermi_absolute`、缺失字段/`None` 不制造伪 variant，stored hash 不能掩盖 canonical 实际内容变化；
+- 同 ID 物理冲突保留原 canonical 并隔离到 `provenance/h5_variants/`；POSIX 与原生 Windows child-process lock contention 均已验证；
+- candidate catalog/cursor 与 canonical metadata sidecar 分离；rich merge、历史 duplicate conflict audit、HDF5-absent stale-ID 清理以及 metadata+provenance write-ahead transaction 保证对账无损且可恢复；
+- AFLUX cursor v2 固定 `page_size`、保存每个 gap-bin 的未消费页尾，并将 page size 纳入 query fingerprint；candidate limit 不再因 gap-bin 数量越界，空 bin quota 仍可重分配；
+- concurrent futures 按完成顺序立即在协调线程处理，peer `KeyboardInterrupt` 不再丢弃先完成结果；MP batch 返回数与请求数不一致时 fail-fast；HDF5 save 仍只在协调线程执行；
+- report 使用真实 `persisted/target` 并输出 `target_reached`/终止原因；未达到 target 时 downloader 非零退出，`run_full_pipeline.py` 同时执行下载 count/report 前置门禁与未显式跳过 required artifacts 的最终 fail-closed 门禁。
+
+这些修改只治理未来下载任务；latest accepted 仍为 `aflow_noleak_v5_30k_seed42`，v4/v5 immutable 数据、模型和指标没有被改写。最终验证：Stage-0 全文件 `74 passed in 21.40s`，完整 WSL 回归 `92 passed in 217.63s`，latest v5 model smoke 退出 0，原生 Windows child-process lock probe 退出 0；四个 immutable 核心文件 SHA-256/shape/group count 全部匹配，`mismatches=[]`。
+
+## 上一正式基线（2026-08-24）
+
+### Phase B 已完成
+
+首个无 provider-label-conditioned feature 的正式实验：
+
+`aflow_noleak_v4_seed42`
+
+| 项目 | 正式结果 |
+|---|---:|
+| AFLOW raw cache | 6,443 |
+| 有效 noleak 张量 | 6,441 |
+| 空间群 | 183 |
+| Outer train/test | 5,153 / 1,288 |
+| Train/test group overlap | 0 |
+| SSL best / early-stop | epoch 37 / 52 |
+| Supervised best / early-stop | epoch 11 / 31 |
+| Outer line-mode gap MAE | **0.049747 eV** |
+| Outer line-mode gap RMSE | **0.159700 eV** |
+| Outer R² | **0.995591** |
+| Type accuracy | **0.865683** |
+| Macro F1 | **0.858339** |
+
+完整报告：
+
+`artifacts/reports/aflow_noleak_v4_seed42/latest_training_report_20260824.md`
+
+旧 6,399/6,443 target-conditioned 结果全部降级为 **legacy diagnostic**，未迁入当前 artifacts，不能作为正式无泄漏结论。
+
+## 新项目根目录
+
+运行项目已迁移至：
+
+`C:\Users\PeiYang\Documents\AI Project\BandStructure AI Project\BandStructure_AI_Project`
+
+论文、Word、图片、表格等资料保留在外层兄弟目录：
+
+`C:\Users\PeiYang\Documents\AI Project\BandStructure AI Project\资料`
+
+`资料/` 不得放进运行根目录。
+
+## 目录结构
 
 ```text
 BandStructure_AI_Project/
-├── PROJECT_BRAIN/              Project memory and constitution. Do not delete.
-│   ├── CONSTITUTION.md         Project rules and invariants.
-│   ├── dev_context.md          Development history and current state.
-│   └── agent_logs/             Session-by-session decision log.
+├── data/
+│   ├── raw/
+│   │   ├── aflow/
+│   │   │   ├── aflow_bands.h5              # byte-identical v4 6,443 baseline
+│   │   │   ├── json_cache/aflow/            # v4 6,443 原始响应
+│   │   │   ├── snapshots/
+│   │   │   │   └── aflow_30000_20260825/   # immutable v5 30k raw+JSON+hash manifest
+│   │   │   ├── supplemental/                # 20 条早期唯一记录，隔离于正式快照
+│   │   │   └── provenance/                  # baseline 恢复、变体与下载审计
+│   │   └── materials_project/
+│   │       ├── mp_bands.h5                  # 12 条已下载 smoke 记录合并集
+│   │       └── provenance/
+│   └── processed/
+│       └── aflow/
+│           ├── ood_tensors/                 # 历史正式 noleak_v4 张量
+│           └── ood_tensors_v5_30000_seed42/ # v5 29,952 no-leak 张量
+├── artifacts/
+│   ├── {models,checkpoints,reports,logs}/aflow_noleak_v5_30k_seed42/ # latest accepted GPU-only v5
+│   └── {models,checkpoints,reports,logs}/aflow_noleak_v4_seed42/     # retained baseline
 ├── configs/
-│   └── api_keys.env            Materials Project API keys.
-├── data_cache/                 Preserved raw and processed training data.
-│   ├── mp_bands.h5             Downloaded MP band structures (HDF5).
-│   ├── mp_metadata.json        MP material metadata (36K+ entries).
-│   ├── json_cache/             Raw MP API response cache.
-│   ├── ood_tensors/            Fixed-shape band tensors + OOD split manifest.
-│   └── human_annotations/      GUI human-in-the-loop training labels.
-│       └── training_manifest.jsonl
-├── src/
-│   ├── data/                   ── Core 4-step pipeline ──
-│   │   ├── mp_adapter.py       Materials Project new/legacy API adapter.
-│   │   ├── batch_download.py   Robust downloader with rate-limiting + resume.
-│   │   ├── band_structure_dataset.py  SSL virtual-strain k-path augmentation.
-│   │   └── ood_tensor_builder.py      Interpolation, curvature, OOD spacegroup split.
-│   ├── engine/
-│   │   ├── auto_tuner.py        Optuna objective with physics-score pruning.
-│   │   ├── finetune_trainer.py  Fine-tuning strategy freeze + report helpers.
-│   │   └── ssl_trainer.py       MBM trainer with adaptive physics-loss weights.
-│   ├── models/
-│   │   ├── band_structure_encoder.py  Transformer encoder + SSL projection/recon heads.
-│   │   ├── losses.py                  Curvature-sign, curvature-consistency, Focal losses.
-│   │   └── inverse_generator.py       Phase 5 optional inverse descriptor generator.
-│   ├── utils/
-│   │   ├── mc_dropout.py        MC Dropout epistemic uncertainty quantification.
-│   │   ├── physics_validator.py Physics violation checking + scoring.
-│   │   ├── visualizer.py        Band overlay grids, parity plots, t-SNE.
-│   │   └── plot_to_tensor.py    Optional Plot-to-Physics image extraction.
-│   └── vision/                  ── Phase 5 multimodal vision ──
-│       ├── multi_format_parser.py     PDF/raster/video band-plot parser.
-│       ├── synthetic_data_generator.py  Synthetic band-plot image generator.
-│       ├── physics_reconstructor.py     Human-calibrated → 6D tensor reconstruction.
-│       ├── brain_invoker.py            Physics Brain inference + application recommender.
-│       └── material_classifier.py      Element/crystal-structure/crystal-type ID.
 ├── scripts/
-│   ├── run_full_pipeline.py     Full automation (download → SSL → finetune → vision).
-│   ├── build_ood_tensors.py     OOD tensor construction CLI.
-│   ├── train_ssl.py             SSL Masked Band Modeling training.
-│   ├── finetune_supervised.py   Supervised gap regression + classification.
-│   ├── gui_workbench.py         Native Python GUI (tkinter): human-in-the-loop workbench.
-│   ├── train_from_human_annotations.py  GUI annotations → YOLO dataset → fine-tune.
-│   ├── train_vision_detector.py YOLOv8 pose detector training.
-│   ├── generate_synthetic_vision_data.py Stage 1 synthetic data generation.
-│   ├── prepare_pdf_vision_dataset.py    Stage 2 PDF pseudo-label dataset.
-│   ├── extract_pdf_images.py    PyMuPDF band-image extraction from papers.
-│   ├── demo_vision_pipeline.py  End-to-end vision pipeline demo.
-│   ├── human_in_the_loop_finetune.py    Stage 2 few-shot Sim2Real bootstrapper.
-│   └── literature_mining_pipeline.py   Stage 3 automated literature mining.
-├── models/                     Trained model artifacts (do not delete).
-│   ├── ssl_mbm_pretrained.keras
-│   ├── ssl_mbm_final_epoch100.keras
-│   ├── ssl_mbm_norm_stats.json
-│   ├── finetuned_gap_predictor.weights.h5
-│   ├── finetuned_gap_predictor_config.json
-│   ├── physics_model_brain_manifest.json
-│   └── vision_detector/
-│       └── band_plot_yolov8_pose_best.pt
-├── checkpoints/                Training checkpoints.
-├── reports/                    Validation reports, figures, and GUI predictions.
-└── tests/
-    └── test_data_pipeline.py
+├── src/
+│   ├── data/
+│   ├── engine/
+│   ├── models/
+│   ├── utils/
+│   └── vision/
+├── tests/
+├── PROJECT_BRAIN/
+├── README.md
+└── requirements*.txt
 ```
 
-## Architecture Overview
+`src` 现有模块职责不变；没有增加平行数据层、平行训练器或第二套模型框架。`scripts/` 保持稳定的扁平入口，职责分类见 `scripts/README.md`。
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  CORE PIPELINE (4 steps)                                     │
-│                                                              │
-│  Download ──► OOD Tensors ──► SSL MBM ──► Supervised        │
-│  (MP API)     (spacegroup      (physics    (gap+type)       │
-│                split)           losses)                      │
-└──────────────────────────────────┬──────────────────────────┘
-                                   │ 6D Tensor Contract
-                                   ▼
-┌─────────────────────────────────────────────────────────────┐
-│  PHASE 5 — MULTIMODAL INFERENCE                              │
-│                                                              │
-│  Paper PDF/Image ──► CV Detection ──► Human Annotation      │
-│                      (YOLOv8 pose)     (tkinter GUI)         │
-│                                              │               │
-│                          ┌───────────────────┘               │
-│                          ▼                                   │
-│                    PhysicsReconstructor                      │
-│                          │                                   │
-│                          ▼                                   │
-│                    PhysicsBrainInvoker                       │
-│                    (gap, type, eff. mass)                    │
-│                          │                                   │
-│                          ▼                                   │
-│                    MaterialClassifier                        │
-│                    (elements, crystal, type)                 │
-└─────────────────────────────────────────────────────────────┘
+## 项目结构图与运行流程图
+
+- 详细项目结构图：`PROJECT_BRAIN/diagrams/project_structure_diagram_20260824.html`
+- 详细运行流程图：`PROJECT_BRAIN/diagrams/runtime_flow_diagram_20260824.html`
+- 图示说明：`PROJECT_BRAIN/diagrams/README.md`
+
+两张图均为静态、可缩放、离线可打开的 HTML/SVG。
+
+## 数据与张量合同
+
+原始记录至少包含：
+
+- `energies`: `(bands,k)` 或 `(spin,bands,k)`，单位 eV；
+- 真实累计 `k_distances` 与 segment/symmetry 信息；
+- `spacegroup_number`、source、material ID、URL 与校验信息；
+- provider gap/type 标签仅用于 target/audit。
+
+固定张量：
+
+```text
+X: (N, 2, 128, 3)
+band:    [occupied edge envelope, empty edge envelope]
+channel: [energy, curvature, normalized distance to extremum]
+
+flatten → (N, 128, 6)
+[VBM_E, VBM_curv, VBM_k_dist, CBM_E, CBM_curv, CBM_k_dist]
 ```
 
-## GUI Workbench (tkinter)
+强制合同：
 
-Native Python GUI — no browser, no Gradio, no HTML sanitization issues.
+- AFLOW `bands_data` 使用 canonical `E_F=0`；原始绝对 `Efermi` 仅作 provenance；
+- edge envelopes 只由 E(k)+E_F 构造；provider 标签不得改变输入、锚定、mask 或插值；
+- 使用 PCHIP shape-preserving interpolation；
+- curvature、crossing、span masking 和物理损失均不得跨 k-path segment；
+- outer split 为 spacegroup 80/20、seed=42、零交集；outer test 不参与模型选择；
+- composition overlap、prototype overlap、label/feature mismatch 与 SHA-256 必须进入 manifest。
 
-```
-┌──────────────────────────────────────────────┐
-│ Image: [_____________] [Browse] [Load]       │
-├──────────────────────┬───────────────────────┤   ┌─────────────────────┐
-│                      │ ▶ Recognize  💾 Save  │   │ [Panel][Fermi][VB]  │
-│                      │ Axes: Y1/Y2/X1/X2     │   │ [CB][AutoVB][AutoCB]│
-│   Drawing Canvas     │ Gap type indicator     │   │ [VBM][CBM][Erase]   │
-│   (zoom/pan/draw)    │ ID: [____] Label:[___] │   │ [X][Y][Undo][Clear] │
-│                      │ ─────────────────────  │   │ [−] 100% [+] [Fit]  │
-│                      │ [Results|Training Log] │   └─────────────────────┘
-│                      │ Output text area       │    ↑ Floating toolbar
-└──────────────────────┴───────────────────────┘
-```
+最新 v5 raw HDF5 SHA-256：
 
-Features:
-- **Drawing tools**: Panel bbox, Fermi line, VB/CB freehand curves, VBM/CBM markers, axis endpoints
-- **Auto-trace**: Click dark curves on light backgrounds to auto-trace band paths
-- **Eraser**: Click any annotation to remove it
-- **Zoom**: Mouse wheel + buttons (5%–1000%), middle-click pan
-- **Recognition**: Submit → Physics Brain → gap + type + effective mass + recommendations
-- **Material ID**: Elements, crystal structure (spacegroup → system + Bravais lattice), crystal type (metal/semiconductor/insulator)
-- **Training**: Save annotations as JSON → `train_from_human_annotations.py` → YOLO fine-tune
-- **Results**: Auto pop-out window with large readable text + curvature microscope + t-SNE
+`d9927f0425de6232a24b8cea2eb8d0c5820e0aa9e29222b7feb621ebc7be08f3`
 
-## Tensor Contract
+最新 v5 split NPZ SHA-256：
 
-```
-Input:  (N, 128, 6) = [VBM_E, VBM_curv, VBM_k_dist,
-                        CBM_E, CBM_curv, CBM_k_dist]
+`c99d21647489bec3c4a20cafd209ef136b83da966af67e0594f4dc5d0aa5b7a5`
 
-OOD split: Stratified-by-spacegroup, train/test = 80/20, seed=42
-Current: 200 samples, 57 spacegroups, 144 train / 56 test
+保留的 v4 raw/split SHA-256：`bb261f1e…b62d` / `c6652b85…ae59`。
+
+## WSL2 + Conda 快速开始
+
+```bash
+conda activate bandstructure-ai
+cd /mnt/c/Users/PeiYang/Documents/'AI Project'/'BandStructure AI Project'/BandStructure_AI_Project
+
+# 完整回归测试
+python -m pytest -q
+
+# 最新模型真实加载与推理 smoke
+CUDA_VISIBLE_DEVICES='' python tests/smoke_latest_model.py
 ```
 
-## Current Performance (2026-06-08)
+`scripts/run_full_pipeline.py --source aflow` 保留为 v4 复现实验入口，不是 v5 latest 状态命令。v4/v5 都是 immutable snapshot；继续扩容必须先建立新的 snapshot/experiment ID，不得向二者原地追加。
 
-| Metric | Train | OOD Test |
-|--------|-------|----------|
-| Gap MAE | 0.115 eV | 0.302 eV |
-| R² | 0.979 | 0.885 |
-| Type Accuracy | 1.000 | 0.982 |
-| Direct Gap Recall | 1.000 | 1.000 |
-| MC Uncertainty (median) | — | 0.151 eV |
+### 重现 v4 基线张量（仅复现，不改 v5）
 
-## Non-Negotiables
+```bash
+python scripts/build_ood_tensors.py \
+  --h5 data/raw/aflow/aflow_bands.h5 \
+  --metadata data/raw/aflow/aflow_metadata.json \
+  --output data/processed/aflow/ood_tensors
+```
 
-- Keep `PROJECT_BRAIN/`, `data_cache/`, `models/`, `checkpoints/`, `reports/`.
-- Keep `configs/api_keys.env`.
-- OOD splitting must remain grouped by `spacegroup_number`.
-- Phase 5 modules stay decoupled from the core 4-step pipeline.
+### 启动 tkinter 工作台
+
+```bash
+python scripts/gui_workbench.py
+```
+
+当前物理模型链路已验收；最新 vision detector 权重在清理前目录中不存在，因此自动图像检测属于可选未验收能力，人工标定与物理模型调用仍保留。
+
+## 环境
+
+- WSL2 / Ubuntu 24.04
+- Conda env：`bandstructure-ai`
+- Python 3.11
+- TensorFlow 2.21
+- 本地 RTX 4060；服务器 2×V100 16GB
+- `requirements-gpu.txt`：核心 GPU 链路
+- `requirements-vision.txt`：可选 YOLO/Ultralytics
+
+Materials Project 密钥只允许放在未跟踪文件 `configs/api_keys.env`。模板为 `configs/api_keys.env.example`。不得输出、写入报告或提交真实密钥。
+
+## 当前科学边界
+
+1. 当前正式模型以已计算 E(k) 为输入，是能带分析/表征模型，不是未知晶体结构→完整能带预测器。
+2. v5 的 0.000352 eV 是 line-mode tensor-gap MAE；对应 model-vs-global-DFT gap MAE 为 0.640281 eV，均不是实验带隙误差。
+3. 当前是单 seed=42，尚缺 3-seed 均值/方差。
+4. space-group OOD 不等于 composition/prototype/source OOD；v5 composition overlap=1,474。
+5. v5 direct-gap recall=0.943662；仍需用多 seed 和更多 OOD 维度确认稳定性。
+6. MC-dropout coverage 尚未做严格 calibration，暂不能直接驱动高成本 DFT 队列。
+
+## 不可破坏约束
+
+- 不改变 E(k)→6D→MBM→监督 heads→tkinter 主链；
+- 不删除 `PROJECT_BRAIN/`、`configs/api_keys.env`、`data/raw/`、`data/processed/` 或当前正式 `artifacts/`；
+- 不把 `资料/` 移入运行根目录；
+- 不提交/输出真实 API key；
+- outer test 不参与 early stopping、checkpoint、阈值或超参数选择；
+- 结构性修改必须同步 README、dev_context、CONSTITUTION 和日期日志。
+
+## 下一阶段
+
+Phase B 已完成。Phase C 在执行任何代码前必须先冻结结构数据合同，随后在现有 encoder/trainer/report 链路上增加 crystal graph→multi-band sequence；详细日程见：
+
+`PROJECT_BRAIN/agent_logs/20260824_next_work_schedule.md`

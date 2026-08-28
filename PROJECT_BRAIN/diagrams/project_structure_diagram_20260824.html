@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BandStructure AI Project — 项目结构图</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}body{background:#020617;color:#e2e8f0;font-family:"JetBrains Mono","Microsoft YaHei",Consolas,monospace;padding:28px;min-height:100vh}.container{max-width:1680px;margin:auto}.header{margin-bottom:20px}.header-row{display:flex;align-items:center;gap:12px}.pulse{width:12px;height:12px;border-radius:50%;background:#22d3ee;box-shadow:0 0 18px #22d3ee;animation:pulse 2s infinite}@keyframes pulse{50%{opacity:.45}}h1{font-size:24px;color:#f8fafc}.subtitle{margin:8px 0 0 24px;color:#94a3b8;font-size:13px}.diagram{background:rgba(15,23,42,.64);border:1px solid #1e293b;border-radius:16px;padding:18px;overflow-x:auto}svg{width:100%;min-width:1280px;display:block}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:14px;margin-top:18px}.card{background:rgba(15,23,42,.72);border:1px solid #1e293b;border-radius:12px;padding:16px}.card h3{font-size:13px;margin-bottom:8px}.card p,.card li{font-size:11px;line-height:1.65;color:#94a3b8}.card ul{list-style:none}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px}.cyan{background:#22d3ee}.green{background:#34d399}.violet{background:#a78bfa}.amber{background:#fbbf24}.rose{background:#fb7185}.footer{text-align:center;color:#475569;font-size:11px;margin-top:16px}.node-title{fill:#f8fafc;font-size:13px;font-weight:700}.node-sub{fill:#cbd5e1;font-size:10px}.node-note{fill:#94a3b8;font-size:9px}.tiny{fill:#64748b;font-size:8px}.zone-label{font-size:12px;font-weight:700}.edge-label{fill:#94a3b8;font-size:9px}.legend{fill:#cbd5e1;font-size:9px}.badge{font-size:8px;font-weight:700}.mono{font-family:Consolas,"Microsoft YaHei",monospace}
+</style>
+</head>
+<body><div class="container">
+<div class="header"><div class="header-row"><span class="pulse"></span><h1>BandStructure AI Project — 详细项目结构图</h1></div><p class="subtitle">迁移后 canonical runtime root · E(k) → 6D → MBM → gap/type → tkinter · 2026-08-24</p></div>
+<div class="diagram"><svg viewBox="0 0 1600 1150" role="img" aria-label="BandStructure AI Project detailed project structure">
+<defs>
+ <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#1e293b" stroke-width=".55"/></pattern>
+ <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#64748b"/></marker>
+ <marker id="cyanArrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#22d3ee"/></marker>
+ <marker id="greenArrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#34d399"/></marker>
+ <marker id="violetArrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#a78bfa"/></marker>
+ <filter id="glow"><feGaussianBlur stdDeviation="2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+</defs>
+<rect width="1600" height="1150" fill="url(#grid)"/>
+
+<!-- outer boundaries -->
+<rect x="218" y="65" width="1345" height="925" rx="16" fill="rgba(251,191,36,.025)" stroke="#fbbf24" stroke-width="1.4" stroke-dasharray="9,5"/>
+<text x="238" y="90" fill="#fbbf24" class="zone-label">CANONICAL RUNTIME ROOT · BandStructure_AI_Project/</text>
+<rect x="24" y="390" width="166" height="190" rx="12" fill="rgba(30,41,59,.48)" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="107" y="420" class="node-title" text-anchor="middle">资料/</text><text x="107" y="442" class="node-sub" text-anchor="middle">外层兄弟目录</text>
+<text x="42" y="472" class="node-note">• 论文 / PDF</text><text x="42" y="491" class="node-note">• Word / 表格</text><text x="42" y="510" class="node-note">• 图片 / 参考资料</text><text x="42" y="536" fill="#fb7185" font-size="9">禁止进入 runtime root</text>
+
+<!-- arrows first -->
+<path d="M190 485 H205 Q218 485 218 472 H1370 Q1390 472 1390 495" fill="none" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="5,5" marker-end="url(#arrow)"/><text x="800" y="462" class="edge-label" text-anchor="middle">仅通过人工标定 / 文献挖掘入口读取</text>
+<path d="M405 260 V305" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#cyanArrow)"/><text x="415" y="286" class="edge-label">入口编排</text>
+<path d="M515 408 H545" stroke="#22d3ee" stroke-width="1.4" marker-end="url(#cyanArrow)"/>
+<path d="M515 440 H745" stroke="#22d3ee" stroke-width="1.4" marker-end="url(#cyanArrow)"/>
+<path d="M515 472 H945" stroke="#22d3ee" stroke-width="1.4" marker-end="url(#cyanArrow)"/>
+<path d="M515 504 H1145" stroke="#22d3ee" stroke-width="1.4" marker-end="url(#cyanArrow)"/>
+<path d="M515 536 H1345" stroke="#22d3ee" stroke-width="1.4" marker-end="url(#cyanArrow)"/>
+<path d="M630 545 V650 H500" fill="none" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#violetArrow)"/><text x="555" y="632" class="edge-label">读写 raw / processed</text>
+<path d="M830 545 V646 H850" fill="none" stroke="#34d399" stroke-width="1.5" marker-end="url(#greenArrow)"/>
+<path d="M1030 545 V616 H1115 V652" fill="none" stroke="#34d399" stroke-width="1.5" marker-end="url(#greenArrow)"/><text x="1060" y="610" class="edge-label">训练产物</text>
+<path d="M1230 545 V620 H1370 V650" fill="none" stroke="#a78bfa" stroke-width="1.4" marker-end="url(#violetArrow)"/>
+<path d="M1430 545 V625 H1420" fill="none" stroke="#22d3ee" stroke-width="1.4" marker-end="url(#cyanArrow)"/>
+<path d="M905 905 H1000" stroke="#34d399" stroke-width="1.5" marker-end="url(#greenArrow)"/><text x="952" y="897" class="edge-label" text-anchor="middle">train / infer</text>
+<path d="M1350 260 V305" stroke="#fb7185" stroke-width="1.3" stroke-dasharray="5,4" marker-end="url(#arrow)"/><text x="1360" y="285" class="edge-label">回归验证</text>
+
+<!-- governance row -->
+<rect x="250" y="115" width="1268" height="150" rx="12" fill="rgba(136,19,55,.05)" stroke="#fb7185" stroke-width="1" stroke-dasharray="5,4"/>
+<text x="268" y="138" fill="#fb7185" class="zone-label">治理 / 配置 / 可复现性</text>
+<g><rect x="275" y="155" width="310" height="82" rx="7" fill="#0f172a"/><rect x="275" y="155" width="310" height="82" rx="7" fill="rgba(136,19,55,.33)" stroke="#fb7185" stroke-width="1.4"/>
+<text x="430" y="178" class="node-title" text-anchor="middle">PROJECT_BRAIN/</text><text x="293" y="198" class="node-note">CONSTITUTION · dev_context · agent_logs</text><text x="293" y="216" class="node-note">migration / cleanup / inventory / diagrams</text></g>
+<g><rect x="610" y="155" width="210" height="82" rx="7" fill="#0f172a"/><rect x="610" y="155" width="210" height="82" rx="7" fill="rgba(136,19,55,.33)" stroke="#fb7185" stroke-width="1.4"/>
+<text x="715" y="178" class="node-title" text-anchor="middle">configs/</text><text x="628" y="199" class="node-note">api_keys.env [gitignored]</text><text x="628" y="217" class="node-note">api_keys.env.example</text></g>
+<g><rect x="845" y="155" width="310" height="82" rx="7" fill="#0f172a"/><rect x="845" y="155" width="310" height="82" rx="7" fill="rgba(30,41,59,.62)" stroke="#94a3b8" stroke-width="1.4"/>
+<text x="1000" y="178" class="node-title" text-anchor="middle">README + requirements*</text><text x="863" y="199" class="node-note">核心 / GPU / vision / dev 依赖</text><text x="863" y="217" class="node-note">WSL2 · Python 3.11 · TensorFlow 2.21</text></g>
+<g><rect x="1180" y="155" width="310" height="82" rx="7" fill="#0f172a"/><rect x="1180" y="155" width="310" height="82" rx="7" fill="rgba(136,19,55,.27)" stroke="#fb7185" stroke-width="1.4"/>
+<text x="1335" y="178" class="node-title" text-anchor="middle">tests/ + .git/</text><text x="1198" y="199" class="node-note">39 regression tests · model smoke</text><text x="1198" y="217" class="node-note">layout contract · secrets / large files ignored</text></g>
+
+<!-- code row -->
+<rect x="250" y="295" width="1268" height="275" rx="12" fill="rgba(8,51,68,.045)" stroke="#22d3ee" stroke-width="1" stroke-dasharray="7,4"/>
+<text x="268" y="320" fill="#22d3ee" class="zone-label">运行代码层 · scripts 只负责编排，核心实现保持在现有 src 包</text>
+<g><rect x="280" y="345" width="235" height="195" rx="8" fill="#0f172a"/><rect x="280" y="345" width="235" height="195" rx="8" fill="rgba(8,51,68,.42)" stroke="#22d3ee" stroke-width="1.5"/>
+<text x="397" y="372" class="node-title" text-anchor="middle">scripts/</text><text x="298" y="398" class="node-note">DATA · build_ood_tensors</text><text x="298" y="419" class="node-note">TRAIN · train_ssl / finetune</text><text x="298" y="440" class="node-note">PIPELINE · run_full_pipeline</text><text x="298" y="461" class="node-note">APP · gui_workbench</text><text x="298" y="482" class="node-note">VISION · PDF / detector / HITL</text><text x="298" y="510" fill="#22d3ee" font-size="9">稳定扁平入口，不复制实现</text></g>
+<g><rect x="545" y="345" width="170" height="195" rx="8" fill="#0f172a"/><rect x="545" y="345" width="170" height="195" rx="8" fill="rgba(6,78,59,.38)" stroke="#34d399" stroke-width="1.5"/>
+<text x="630" y="372" class="node-title" text-anchor="middle">src/data</text><text x="559" y="398" class="node-note">aflow_adapter</text><text x="559" y="418" class="node-note">mp_adapter</text><text x="559" y="438" class="node-note">batch_download</text><text x="559" y="458" class="node-note">band_store</text><text x="559" y="478" class="node-note">ood_tensor_builder</text><text x="559" y="506" class="tiny">下载·解析·6D·OOD split</text></g>
+<g><rect x="745" y="345" width="170" height="195" rx="8" fill="#0f172a"/><rect x="745" y="345" width="170" height="195" rx="8" fill="rgba(6,78,59,.38)" stroke="#34d399" stroke-width="1.5"/>
+<text x="830" y="372" class="node-title" text-anchor="middle">src/models</text><text x="759" y="398" class="node-note">band_structure_encoder</text><text x="759" y="418" class="node-note">losses</text><text x="759" y="438" class="node-note">inverse_generator</text><text x="759" y="473" class="tiny">Transformer · mask token</text><text x="759" y="491" class="tiny">gap/type · physics loss</text></g>
+<g><rect x="945" y="345" width="170" height="195" rx="8" fill="#0f172a"/><rect x="945" y="345" width="170" height="195" rx="8" fill="rgba(6,78,59,.38)" stroke="#34d399" stroke-width="1.5"/>
+<text x="1030" y="372" class="node-title" text-anchor="middle">src/engine</text><text x="959" y="398" class="node-note">ssl_trainer</text><text x="959" y="418" class="node-note">finetune_trainer</text><text x="959" y="438" class="node-note">auto_tuner</text><text x="959" y="473" class="tiny">warmup+cosine · clip</text><text x="959" y="491" class="tiny">early stop · best/last/resume</text></g>
+<g><rect x="1145" y="345" width="170" height="195" rx="8" fill="#0f172a"/><rect x="1145" y="345" width="170" height="195" rx="8" fill="rgba(76,29,149,.36)" stroke="#a78bfa" stroke-width="1.5"/>
+<text x="1230" y="372" class="node-title" text-anchor="middle">src/utils</text><text x="1159" y="398" class="node-note">mc_dropout</text><text x="1159" y="418" class="node-note">physics_validator</text><text x="1159" y="438" class="node-note">plot_to_tensor</text><text x="1159" y="458" class="node-note">visualizer</text><text x="1159" y="491" class="tiny">QA · uncertainty · plots</text></g>
+<g><rect x="1345" y="345" width="145" height="195" rx="8" fill="#0f172a"/><rect x="1345" y="345" width="145" height="195" rx="8" fill="rgba(8,51,68,.42)" stroke="#22d3ee" stroke-width="1.5"/>
+<text x="1417" y="372" class="node-title" text-anchor="middle">src/vision</text><text x="1358" y="398" class="node-note">brain_invoker</text><text x="1358" y="418" class="node-note">material_classifier</text><text x="1358" y="438" class="node-note">multi_format_parser</text><text x="1358" y="458" class="node-note">physics_reconstructor</text><text x="1358" y="478" class="node-note">synthetic_generator</text><text x="1358" y="510" fill="#fb7185" font-size="8">detector weights: optional/missing</text></g>
+
+<!-- data zone -->
+<rect x="250" y="610" width="700" height="325" rx="12" fill="rgba(76,29,149,.055)" stroke="#a78bfa" stroke-width="1.2" stroke-dasharray="7,4"/>
+<text x="268" y="636" fill="#a78bfa" class="zone-label">data/ · 原始数据与当前唯一正式派生快照</text>
+<g><rect x="278" y="660" width="275" height="185" rx="8" fill="#0f172a"/><rect x="278" y="660" width="275" height="185" rx="8" fill="rgba(76,29,149,.35)" stroke="#a78bfa" stroke-width="1.5"/>
+<text x="415" y="687" class="node-title" text-anchor="middle">raw/aflow/</text><text x="294" y="711" class="node-note">aflow_bands.h5 · 6,443</text><text x="294" y="731" class="node-note">json_cache/aflow · 6,443</text><text x="294" y="751" class="node-note">metadata / download / excluded</text><text x="294" y="771" class="node-note">supplemental · 20 unique</text><text x="294" y="791" class="node-note">provenance · 2 HDF5 variants</text><text x="294" y="817" fill="#a78bfa" font-size="8">canonical SHA-256 = bb261f…</text></g>
+<g><rect x="575" y="660" width="155" height="185" rx="8" fill="#0f172a"/><rect x="575" y="660" width="155" height="185" rx="8" fill="rgba(76,29,149,.35)" stroke="#a78bfa" stroke-width="1.5"/>
+<text x="652" y="687" class="node-title" text-anchor="middle">raw/MP/</text><text x="590" y="716" class="node-note">mp_bands.h5</text><text x="590" y="736" class="node-note">12 unique</text><text x="590" y="756" class="node-note">12 JSON</text><text x="590" y="776" class="node-note">3000 metadata</text><text x="590" y="806" fill="#fb7185" font-size="8">正式扩展受网络阻塞</text></g>
+<g><rect x="750" y="660" width="175" height="240" rx="8" fill="#0f172a"/><rect x="750" y="660" width="175" height="240" rx="8" fill="rgba(76,29,149,.35)" stroke="#a78bfa" stroke-width="1.5"/>
+<text x="837" y="687" class="node-title" text-anchor="middle">processed/aflow/</text><text x="765" y="713" class="node-sub">ood_tensors/</text><text x="765" y="738" class="node-note">6,441 samples</text><text x="765" y="758" class="node-note">(N,2,128,3)</text><text x="765" y="778" class="node-note">183 space groups</text><text x="765" y="798" class="node-note">5153 / 1288</text><text x="765" y="818" class="node-note">group overlap = 0</text><text x="765" y="838" class="node-note">segment IDs + manifest</text><text x="765" y="870" fill="#34d399" font-size="8">formal noleak_v4 only</text></g>
+
+<!-- artifacts zone -->
+<rect x="980" y="610" width="538" height="325" rx="12" fill="rgba(120,53,15,.055)" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="7,4"/>
+<text x="998" y="636" fill="#fbbf24" class="zone-label">artifacts/ · 统一 experiment_id = aflow_noleak_v4_seed42</text>
+<g><rect x="1008" y="660" width="222" height="112" rx="8" fill="#0f172a"/><rect x="1008" y="660" width="222" height="112" rx="8" fill="rgba(120,53,15,.32)" stroke="#fbbf24" stroke-width="1.5"/>
+<text x="1119" y="686" class="node-title" text-anchor="middle">models/</text><text x="1023" y="710" class="node-note">SSL best + epoch52 final</text><text x="1023" y="730" class="node-note">norm stats · finetuned weights</text><text x="1023" y="750" class="node-note">config · brain manifest</text></g>
+<g><rect x="1250" y="660" width="235" height="112" rx="8" fill="#0f172a"/><rect x="1250" y="660" width="235" height="112" rx="8" fill="rgba(120,53,15,.32)" stroke="#fbbf24" stroke-width="1.5"/>
+<text x="1367" y="686" class="node-title" text-anchor="middle">checkpoints/</text><text x="1265" y="710" class="node-note">SSL ckpt-best / ckpt-last</text><text x="1265" y="730" class="node-note">supervised ft/best.weights</text><text x="1265" y="750" class="node-note">periodic checkpoints removed</text></g>
+<g><rect x="1008" y="795" width="222" height="112" rx="8" fill="#0f172a"/><rect x="1008" y="795" width="222" height="112" rx="8" fill="rgba(120,53,15,.32)" stroke="#fbbf24" stroke-width="1.5"/>
+<text x="1119" y="821" class="node-title" text-anchor="middle">reports/</text><text x="1023" y="845" class="node-note">metrics · predictions · figures</text><text x="1023" y="865" class="node-note">latest training report</text><text x="1023" y="885" class="node-note">artifact_provenance · 33 files</text></g>
+<g><rect x="1250" y="795" width="235" height="112" rx="8" fill="#0f172a"/><rect x="1250" y="795" width="235" height="112" rx="8" fill="rgba(120,53,15,.32)" stroke="#fbbf24" stroke-width="1.5"/>
+<text x="1367" y="821" class="node-title" text-anchor="middle">logs/</text><text x="1265" y="845" class="node-note">完整 SSL console log</text><text x="1265" y="865" class="node-note">完整 supervised console log</text><text x="1265" y="885" class="node-note">TensorBoard train / val</text></g>
+
+<!-- legend -->
+<g transform="translate(250 1020)"><text x="0" y="0" fill="#f8fafc" font-size="11" font-weight="700">图例</text>
+<rect x="0" y="18" width="18" height="11" rx="2" fill="rgba(8,51,68,.42)" stroke="#22d3ee"/><text x="26" y="27" class="legend">入口 / GUI / 交互</text>
+<rect x="180" y="18" width="18" height="11" rx="2" fill="rgba(6,78,59,.38)" stroke="#34d399"/><text x="206" y="27" class="legend">核心模型与训练逻辑</text>
+<rect x="400" y="18" width="18" height="11" rx="2" fill="rgba(76,29,149,.35)" stroke="#a78bfa"/><text x="426" y="27" class="legend">数据 / 张量 / 验证工具</text>
+<rect x="635" y="18" width="18" height="11" rx="2" fill="rgba(120,53,15,.32)" stroke="#fbbf24"/><text x="661" y="27" class="legend">训练产物</text>
+<rect x="820" y="18" width="18" height="11" rx="2" fill="rgba(136,19,55,.33)" stroke="#fb7185"/><text x="846" y="27" class="legend">治理 / 安全 / 受保护规则</text>
+<line x1="1070" y1="24" x2="1110" y2="24" stroke="#94a3b8" stroke-dasharray="5,4"/><text x="1120" y="27" class="legend">可选或人工路径</text></g>
+<g transform="translate(250 1074)"><rect width="1268" height="42" rx="8" fill="rgba(6,78,59,.18)" stroke="#34d399"/><text x="18" y="18" fill="#34d399" font-size="10" font-weight="700">当前验证状态</text><text x="145" y="18" class="node-note">Phase B complete · 39 tests · real model smoke passed · data 4.078 GiB · artifacts 0.032 GiB</text><text x="18" y="34" class="tiny">Phase C pending: 先冻结 structure + multi-band schema，再升级现有 adapter/store/builder/encoder/trainer 链路。</text></g>
+</svg></div>
+<div class="cards">
+<div class="card"><h3><span class="dot rose"></span>受保护边界</h3><ul><li>• 资料始终在 runtime root 外</li><li>• API key 仅在 gitignored config</li><li>• Outer OOD test 不参与模型选择</li><li>• 历史 target-conditioned 结果仅作 legacy diagnostic</li></ul></div>
+<div class="card"><h3><span class="dot violet"></span>数据边界</h3><ul><li>• AFLOW formal 6,443 与 supplemental 20 隔离</li><li>• 当前 processed snapshot 只有 noleak_v4</li><li>• HDF5 / JSON / NPZ 均有 SHA-256 provenance</li><li>• segment-aware physics contract 贯穿全链</li></ul></div>
+<div class="card"><h3><span class="dot amber"></span>产物边界</h3><ul><li>• 四类 artifact 共用同一 experiment ID</li><li>• 只保留 best/last 与正式结果</li><li>• 报告、预测、图像和日志可回链</li><li>• Vision detector 权重当前不存在，标为 optional</li></ul></div>
+<div class="card"><h3><span class="dot green"></span>模块原则</h3><ul><li>• scripts 只做编排</li><li>• src/data 管数据科学合同</li><li>• src/models + engine 管模型和训练</li><li>• 不创建第二套平行框架</li></ul></div>
+</div>
+<p class="footer">BandStructure AI Project · Canonical structure after cleanup/migration · Generated 2026-08-24</p>
+</div></body></html>

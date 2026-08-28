@@ -2,54 +2,47 @@
 # BandStructure AI Project — .gitignore
 # ============================================================
 
-# ── Sensitive files ──
+# Secrets
 configs/api_keys.env
+.env
 
-# ── Large data files ──
-data_cache/*.h5
-data_cache/*.npz
-data_cache/*.json
-data_cache/json_cache/
-data_cache/ood_tensors/
-data_cache/yolo_human_train/
-data_cache/human_annotations/*.json
-data_cache/human_annotations/*.jsonl
+# Downloaded and derived data (kept locally, never committed)
+data/raw/
+data/processed/
+data/annotations/
 
-# ── Trained model artifacts (large) ──
-models/*.keras
-models/*.h5
-models/*.pt
-models/*.json
-models/vision_detector/
+# Trained artifacts (kept locally, never committed)
+artifacts/models/
+artifacts/checkpoints/
+artifacts/reports/
+artifacts/logs/
 
-# ── Checkpoints ──
-checkpoints/
+# Migration/download staging
+._server_import_*/
+*.tar
+*.tar.gz
+*.tar.zst
+*.part
 
-# ── TensorBoard logs ──
-logs/
-
-# ── Generated reports ──
-reports/
-!reports/.gitkeep
-
-# ── Gradio artifacts ──
+# Runtime UI outputs
 .gradio/
 
-# ── Python cache ──
+# Python/test caches
 __pycache__/
 *.pyc
 *.pyo
-
-# ── Conda / venv ──
-.env
+.pytest_cache/
+.coverage*
 *.egg-info/
 
-# ── IDE ──
+# Environments
+.venv/
+venv/
+
+# IDE/OS
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# ── OS ──
 .DS_Store
 Thumbs.db
