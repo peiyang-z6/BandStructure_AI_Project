@@ -19,6 +19,8 @@ def freeze_encoder_layers(ssl_encoder: keras.Model, freeze_layers: int) -> Dict[
         ssl_encoder.projection_head.trainable = False
     if hasattr(ssl_encoder, "reconstruction_head"):
         ssl_encoder.reconstruction_head.trainable = False
+    if hasattr(ssl_encoder, "mask_token"):
+        ssl_encoder.mask_token.trainable = False
 
     base = ssl_encoder.encoder
     total_layers = len(base.transformer_layers)
@@ -43,7 +45,7 @@ def freeze_encoder_layers(ssl_encoder: keras.Model, freeze_layers: int) -> Dict[
         "freeze_layers": freeze_to,
         "frozen_layers": frozen,
         "trainable_encoder_layers": trainable,
-        "frozen_heads": ["projection_head", "reconstruction_head"],
+        "frozen_heads": ["projection_head", "reconstruction_head", "mask_token"],
         "trainable_heads": ["extremum_expected_gap_head", "type_head"],
         "learning_rate_policy": {
             "encoder_backbone": "low effective LR / frozen early layers",

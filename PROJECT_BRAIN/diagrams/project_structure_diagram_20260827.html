@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BandStructure AI Project Structure — 2026-08-27</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}body{font-family:'JetBrains Mono',monospace;background:#020617;color:#f8fafc;padding:28px}.wrap{max-width:1480px;margin:auto}.head{margin-bottom:20px}.row{display:flex;align-items:center;gap:12px}.dot{width:12px;height:12px;border-radius:50%;background:#22d3ee;box-shadow:0 0 18px #22d3ee}h1{font-size:23px}.sub{margin:7px 0 0 25px;color:#94a3b8;font-size:13px}.panel,.card{background:rgba(15,23,42,.72);border:1px solid #1e293b;border-radius:16px}.panel{padding:16px;overflow:auto}svg{width:100%;min-width:1280px;display:block}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:16px}.card{padding:15px}.card h3{font-size:13px;margin-bottom:8px}.card p,.card li{font-size:11px;line-height:1.6;color:#94a3b8}.card ul{list-style:none}.cyan{color:#22d3ee}.green{color:#34d399}.violet{color:#a78bfa}.amber{color:#fbbf24}.rose{color:#fb7185}.foot{text-align:center;color:#475569;font-size:11px;margin-top:15px}
+</style></head>
+<body><div class="wrap">
+<div class="head"><div class="row"><span class="dot"></span><h1>BandStructure AI — Project Structure</h1></div><div class="sub">2026-08-27 · v6 metric-fix architecture · main direction unchanged</div></div>
+<div class="panel"><svg viewBox="0 0 1400 900" role="img" aria-label="BandStructure AI project structure">
+<defs>
+ <marker id="arr" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#64748b"/></marker>
+ <marker id="ok" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#34d399"/></marker>
+ <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0L0 0 0 40" fill="none" stroke="#1e293b" stroke-width=".5"/></pattern>
+</defs>
+<rect width="1400" height="900" fill="url(#grid)"/>
+<!-- arrows behind boxes -->
+<path d="M250 220H345" stroke="#64748b" stroke-width="2" marker-end="url(#arr)"/>
+<path d="M250 380H345" stroke="#64748b" stroke-width="2" marker-end="url(#arr)"/>
+<path d="M250 555H345" stroke="#64748b" stroke-width="2" marker-end="url(#arr)"/>
+<path d="M615 270H715" stroke="#64748b" stroke-width="2" marker-end="url(#arr)"/>
+<path d="M615 465H715" stroke="#64748b" stroke-width="2" marker-end="url(#arr)"/>
+<path d="M995 330H1090" stroke="#34d399" stroke-width="2" marker-end="url(#ok)"/>
+<path d="M1090 490H995" stroke="#34d399" stroke-width="2" marker-end="url(#ok)"/>
+<path d="M855 655V740" stroke="#a78bfa" stroke-width="2" marker-end="url(#arr)"/>
+<path d="M480 655V740" stroke="#a78bfa" stroke-width="2" marker-end="url(#arr)"/>
+<text x="295" y="207" fill="#94a3b8" font-size="10">read-only inputs</text>
+<text x="651" y="257" fill="#94a3b8" font-size="10">versioned run</text>
+<text x="1038" y="315" fill="#34d399" font-size="10">SHA manifest</text>
+<!-- boundaries -->
+<rect x="25" y="45" width="260" height="650" rx="14" fill="rgba(120,53,15,.08)" stroke="#fbbf24" stroke-width="1.3" stroke-dasharray="8,4"/>
+<text x="42" y="68" fill="#fbbf24" font-size="12" font-weight="700">DATA + IMMUTABLE SNAPSHOTS</text>
+<rect x="320" y="45" width="330" height="650" rx="14" fill="rgba(6,78,59,.08)" stroke="#34d399" stroke-width="1.3" stroke-dasharray="8,4"/>
+<text x="338" y="68" fill="#34d399" font-size="12" font-weight="700">CORE CODE — ONE PIPELINE</text>
+<rect x="690" y="45" width="330" height="650" rx="14" fill="rgba(76,29,149,.08)" stroke="#a78bfa" stroke-width="1.3" stroke-dasharray="8,4"/>
+<text x="708" y="68" fill="#a78bfa" font-size="12" font-weight="700">VERSIONED EXPERIMENT ARTIFACTS</text>
+<rect x="1060" y="45" width="315" height="650" rx="14" fill="rgba(8,51,68,.08)" stroke="#22d3ee" stroke-width="1.3" stroke-dasharray="8,4"/>
+<text x="1078" y="68" fill="#22d3ee" font-size="12" font-weight="700">EXECUTION + PRODUCT SURFACE</text>
+<!-- data boxes -->
+<g><rect x="50" y="100" width="210" height="120" rx="8" fill="#0f172a"/><rect x="50" y="100" width="210" height="120" rx="8" fill="rgba(120,53,15,.35)" stroke="#fbbf24" stroke-width="1.5"/>
+<text x="155" y="126" fill="white" font-size="12" text-anchor="middle" font-weight="700">AFLOW Canonical Store</text><text x="65" y="149" fill="#94a3b8" font-size="10">• semantic SHA-256 / no overwrite</text><text x="65" y="168" fill="#94a3b8" font-size="10">• cross-process single writer lock</text><text x="65" y="187" fill="#94a3b8" font-size="10">• metadata WAL + cursor v2</text><text x="65" y="206" fill="#94a3b8" font-size="10">• 30,000 canonical groups</text></g>
+<g><rect x="50" y="255" width="210" height="120" rx="8" fill="#0f172a"/><rect x="50" y="255" width="210" height="120" rx="8" fill="rgba(120,53,15,.28)" stroke="#fbbf24" stroke-width="1.5"/>
+<text x="155" y="281" fill="white" font-size="12" text-anchor="middle" font-weight="700">Immutable v4 Baseline</text><text x="65" y="306" fill="#94a3b8" font-size="10">raw: 6,443</text><text x="65" y="325" fill="#94a3b8" font-size="10">tensor: 6,441</text><text x="65" y="344" fill="#94a3b8" font-size="10">historical model + reports</text><text x="65" y="363" fill="#fb7185" font-size="9">manifest timestamp incident audited</text></g>
+<g><rect x="50" y="410" width="210" height="170" rx="8" fill="#0f172a"/><rect x="50" y="410" width="210" height="170" rx="8" fill="rgba(120,53,15,.28)" stroke="#fbbf24" stroke-width="1.5"/>
+<text x="155" y="436" fill="white" font-size="12" text-anchor="middle" font-weight="700">Immutable v5 · 30k</text><text x="65" y="461" fill="#94a3b8" font-size="10">raw snapshot: 30,000</text><text x="65" y="480" fill="#94a3b8" font-size="10">full tensors: 29,952</text><text x="65" y="499" fill="#94a3b8" font-size="10">shape: (N,2,128,3)</text><text x="65" y="518" fill="#94a3b8" font-size="10">outer train/test: 23,933 / 6,019</text><text x="65" y="537" fill="#94a3b8" font-size="10">spacegroup overlap: 0</text><text x="65" y="558" fill="#34d399" font-size="9">read-only input for v6</text></g>
+<g><rect x="50" y="615" width="210" height="55" rx="8" fill="#0f172a"/><rect x="50" y="615" width="210" height="55" rx="8" fill="rgba(136,19,55,.28)" stroke="#fb7185"/><text x="155" y="638" fill="white" font-size="11" text-anchor="middle">configs/api_keys.env</text><text x="155" y="655" fill="#fb7185" font-size="9" text-anchor="middle">local only · never sync/commit</text></g>
+<!-- code boxes -->
+<g><rect x="345" y="100" width="270" height="125" rx="8" fill="#0f172a"/><rect x="345" y="100" width="270" height="125" rx="8" fill="rgba(6,78,59,.38)" stroke="#34d399" stroke-width="1.5"/>
+<text x="480" y="126" fill="white" font-size="12" text-anchor="middle" font-weight="700">src/data</text><text x="360" y="151" fill="#94a3b8" font-size="10">AFLOW/MP adapters · BandStore</text><text x="360" y="170" fill="#94a3b8" font-size="10">OOD tensor builder · segment IDs</text><text x="360" y="189" fill="#94a3b8" font-size="10">provider labels remain target/audit</text><text x="360" y="208" fill="#34d399" font-size="9">single canonical data path</text></g>
+<g><rect x="345" y="255" width="270" height="125" rx="8" fill="#0f172a"/><rect x="345" y="255" width="270" height="125" rx="8" fill="rgba(6,78,59,.38)" stroke="#34d399" stroke-width="1.5"/>
+<text x="480" y="281" fill="white" font-size="12" text-anchor="middle" font-weight="700">src/models + src/engine</text><text x="360" y="306" fill="#94a3b8" font-size="10">Transformer SSLEncoder / MBM</text><text x="360" y="325" fill="#94a3b8" font-size="10">actual mask 15–30% · fixed val mask</text><text x="360" y="344" fill="#94a3b8" font-size="10">weighted epoch metrics</text><text x="360" y="363" fill="#fb7185" font-size="9">magnitude consistency hard-disabled</text></g>
+<g><rect x="345" y="410" width="270" height="145" rx="8" fill="#0f172a"/><rect x="345" y="410" width="270" height="145" rx="8" fill="rgba(6,78,59,.38)" stroke="#34d399" stroke-width="1.5"/>
+<text x="480" y="436" fill="white" font-size="12" text-anchor="middle" font-weight="700">scripts — Orchestration</text><text x="360" y="461" fill="#94a3b8" font-size="10">train_ssl.py · GPU placement gate</text><text x="360" y="480" fill="#94a3b8" font-size="10">finetune: train-only → eval-only</text><text x="360" y="499" fill="#94a3b8" font-size="10">run_full_pipeline: versioned inputs</text><text x="360" y="518" fill="#94a3b8" font-size="10">status-only is truly no-write</text><text x="360" y="537" fill="#34d399" font-size="9">required artifacts fail closed</text></g>
+<g><rect x="345" y="590" width="270" height="80" rx="8" fill="#0f172a"/><rect x="345" y="590" width="270" height="80" rx="8" fill="rgba(136,19,55,.25)" stroke="#fb7185"/>
+<text x="480" y="616" fill="white" font-size="12" text-anchor="middle" font-weight="700">tests + TDD Gates</text><text x="360" y="640" fill="#94a3b8" font-size="10">RED → GREEN → full pytest</text><text x="360" y="658" fill="#94a3b8" font-size="10">immutable hashes · GPU · artifact gates</text></g>
+<!-- artifacts -->
+<g><rect x="715" y="100" width="280" height="150" rx="8" fill="#0f172a"/><rect x="715" y="100" width="280" height="150" rx="8" fill="rgba(76,29,149,.4)" stroke="#a78bfa" stroke-width="1.5"/>
+<text x="855" y="126" fill="white" font-size="12" text-anchor="middle" font-weight="700">v6 Models</text><text x="730" y="151" fill="#94a3b8" font-size="10">ssl_mbm_pretrained.keras</text><text x="730" y="170" fill="#94a3b8" font-size="10">ssl final + best/last checkpoints</text><text x="730" y="189" fill="#94a3b8" font-size="10">supervised best.weights.h5</text><text x="730" y="208" fill="#94a3b8" font-size="10">supervised last.weights.h5</text><text x="730" y="227" fill="#34d399" font-size="9">accepted = restored-best (hashed)</text></g>
+<g><rect x="715" y="285" width="280" height="175" rx="8" fill="#0f172a"/><rect x="715" y="285" width="280" height="175" rx="8" fill="rgba(76,29,149,.4)" stroke="#a78bfa" stroke-width="1.5"/>
+<text x="855" y="311" fill="white" font-size="12" text-anchor="middle" font-weight="700">v6 Reports + Metrics</text><text x="730" y="336" fill="#94a3b8" font-size="10">inner_selection_manifest.json</text><text x="730" y="355" fill="#94a3b8" font-size="10">metrics + predictions + plots</text><text x="730" y="374" fill="#94a3b8" font-size="10">analytic gap baseline = 0 error</text><text x="730" y="393" fill="#94a3b8" font-size="10">sample + group-macro + mismatch</text><text x="730" y="412" fill="#94a3b8" font-size="10">raw vs tolerance MC coverage</text><text x="730" y="431" fill="#94a3b8" font-size="10">dated + latest report alias</text><text x="730" y="449" fill="#a78bfa" font-size="9">space-group OOD only</text></g>
+<g><rect x="715" y="495" width="280" height="160" rx="8" fill="#0f172a"/><rect x="715" y="495" width="280" height="160" rx="8" fill="rgba(76,29,149,.4)" stroke="#a78bfa" stroke-width="1.5"/>
+<text x="855" y="521" fill="white" font-size="12" text-anchor="middle" font-weight="700">Logs + Acceptance</text><text x="730" y="546" fill="#94a3b8" font-size="10">ssl_history.json + TensorBoard</text><text x="730" y="565" fill="#94a3b8" font-size="10">supervised CSV + stdout/stderr</text><text x="730" y="584" fill="#94a3b8" font-size="10">GPU usage trace + env lock</text><text x="730" y="603" fill="#94a3b8" font-size="10">per-file + archive SHA-256</text><text x="730" y="622" fill="#34d399" font-size="9">local reload + finite forward</text><text x="730" y="641" fill="#34d399" font-size="9">promote only after all gates</text></g>
+<!-- execution/product -->
+<g><rect x="1090" y="100" width="255" height="165" rx="8" fill="#0f172a"/><rect x="1090" y="100" width="255" height="165" rx="8" fill="rgba(8,51,68,.4)" stroke="#22d3ee" stroke-width="1.5"/>
+<text x="1218" y="126" fill="white" font-size="12" text-anchor="middle" font-weight="700">Local Windows + WSL2</text><text x="1105" y="151" fill="#94a3b8" font-size="10">source of truth: canonical Git tag</text><text x="1105" y="170" fill="#94a3b8" font-size="10">immutable data acceptance</text><text x="1105" y="189" fill="#94a3b8" font-size="10">TDD / compile / pytest</text><text x="1105" y="208" fill="#94a3b8" font-size="10">manifest-driven upload/return</text><text x="1105" y="227" fill="#22d3ee" font-size="9">RTX smoke ≠ formal result</text><text x="1105" y="246" fill="#fb7185" font-size="9">secrets excluded</text></g>
+<g><rect x="1090" y="300" width="255" height="165" rx="8" fill="#0f172a"/><rect x="1090" y="300" width="255" height="165" rx="8" fill="rgba(8,51,68,.4)" stroke="#22d3ee" stroke-width="1.5"/>
+<text x="1218" y="326" fill="white" font-size="12" text-anchor="middle" font-weight="700">Remote GPU Server</text><text x="1105" y="351" fill="#94a3b8" font-size="10">2× Tesla V100-SXM2-16GB</text><text x="1105" y="370" fill="#94a3b8" font-size="10">formal run: one validated GPU</text><text x="1105" y="389" fill="#94a3b8" font-size="10">TF 2.21 · CUDA 12.5.1 · sm_70</text><text x="1105" y="408" fill="#94a3b8" font-size="10">critical tensors must be /GPU:0</text><text x="1105" y="427" fill="#34d399" font-size="9">Conv1D forward/backward finite</text><text x="1105" y="446" fill="#fb7185" font-size="9">CPU fallback → abort</text></g>
+<g><rect x="1090" y="505" width="255" height="150" rx="8" fill="#0f172a"/><rect x="1090" y="505" width="255" height="150" rx="8" fill="rgba(8,51,68,.4)" stroke="#22d3ee" stroke-width="1.5"/>
+<text x="1218" y="531" fill="white" font-size="12" text-anchor="middle" font-weight="700">tkinter GUI / Plot-to-Physics</text><text x="1105" y="556" fill="#94a3b8" font-size="10">accepted encoder + supervised head</text><text x="1105" y="575" fill="#94a3b8" font-size="10">manual calibration / visualization</text><text x="1105" y="594" fill="#94a3b8" font-size="10">line-mode analyzer semantics</text><text x="1105" y="615" fill="#fbbf24" font-size="9">Phase C crystal-structure predictor</text><text x="1105" y="634" fill="#fbbf24" font-size="9">PENDING — not implemented</text></g>
+<!-- governance -->
+<g><rect x="320" y="740" width="330" height="120" rx="10" fill="#0f172a"/><rect x="320" y="740" width="330" height="120" rx="10" fill="rgba(136,19,55,.28)" stroke="#fb7185" stroke-width="1.5"/>
+<text x="485" y="768" fill="white" font-size="12" text-anchor="middle" font-weight="700">PROJECT_BRAIN Governance</text><text x="338" y="794" fill="#94a3b8" font-size="10">CONSTITUTION · dev_context · dated logs</text><text x="338" y="815" fill="#94a3b8" font-size="10">schedule · diagrams · transfer manifests</text><text x="338" y="838" fill="#fb7185" font-size="9">docs describe intent; disk + hashes show truth</text></g>
+<g><rect x="690" y="740" width="330" height="120" rx="10" fill="#0f172a"/><rect x="690" y="740" width="330" height="120" rx="10" fill="rgba(76,29,149,.28)" stroke="#a78bfa" stroke-width="1.5"/>
+<text x="855" y="768" fill="white" font-size="12" text-anchor="middle" font-weight="700">Canonical Git + Sync Manifests</text><text x="708" y="794" fill="#94a3b8" font-size="10">pre-v6 snapshot → metric-fix commit/tag</text><text x="708" y="815" fill="#94a3b8" font-size="10">staging → hash verify → remote apply</text><text x="708" y="838" fill="#34d399" font-size="9">data/model transfer only when hashes differ</text></g>
+<!-- legend -->
+<text x="1070" y="762" fill="white" font-size="11" font-weight="700">Legend</text><rect x="1070" y="780" width="16" height="10" rx="2" fill="rgba(120,53,15,.35)" stroke="#fbbf24"/><text x="1095" y="789" fill="#94a3b8" font-size="9">data / snapshot</text><rect x="1190" y="780" width="16" height="10" rx="2" fill="rgba(6,78,59,.38)" stroke="#34d399"/><text x="1215" y="789" fill="#94a3b8" font-size="9">core code</text><rect x="1070" y="803" width="16" height="10" rx="2" fill="rgba(76,29,149,.4)" stroke="#a78bfa"/><text x="1095" y="812" fill="#94a3b8" font-size="9">artifacts</text><rect x="1190" y="803" width="16" height="10" rx="2" fill="rgba(8,51,68,.4)" stroke="#22d3ee"/><text x="1215" y="812" fill="#94a3b8" font-size="9">execution/UI</text><rect x="1070" y="826" width="16" height="10" rx="2" fill="rgba(136,19,55,.28)" stroke="#fb7185"/><text x="1095" y="835" fill="#94a3b8" font-size="9">safety/governance</text>
+</svg></div>
+<div class="cards">
+<div class="card"><h3 class="amber">Immutable inputs</h3><ul><li>• v4 retained baseline</li><li>• v5 30k raw + tensor split</li><li>• v6 never overwrites either</li></ul></div>
+<div class="card"><h3 class="green">One architecture</h3><ul><li>• E(k) → 6D tensor → MBM</li><li>• supervised gap/type heads</li><li>• no parallel training framework</li></ul></div>
+<div class="card"><h3 class="violet">Versioned acceptance</h3><ul><li>• best / last / accepted</li><li>• machine metrics + predictions</li><li>• SHA-256 + local reload</li></ul></div>
+<div class="card"><h3 class="rose">Scientific boundary</h3><ul><li>• E(k) analyzer, not DFT replacement</li><li>• space-group OOD only</li><li>• Phase C remains pending</li></ul></div>
+</div><div class="foot">BandStructure AI Project · Constitution-governed · 2026-08-27</div>
+</div></body></html>

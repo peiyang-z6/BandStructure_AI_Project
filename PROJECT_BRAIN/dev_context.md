@@ -1,152 +1,165 @@
 # BandStructure AI Project — Dev Context
 
-Last updated: 2026-08-26
+Last updated: 2026-08-27
 Current root: `C:\Users\PeiYang\Documents\AI Project\BandStructure AI Project\BandStructure_AI_Project`
+Branch: `v6-metricfix-20260827`
+Pre-v6 audited snapshot commit: `025d5ce`
 
-## Current State: v5 30k Accepted on NVIDIA GPU
+## Current State
 
-项目主链仍为完整 E(k) → `(N,2,128,3)` 6D 张量 → MBM SSL → gap/type 微调 → tkinter Plot-to-Physics。最新已接受实验为 `aflow_noleak_v5_30k_seed42`；30k immutable raw、29,952 no-leak tensors、space-group-disjoint split、V100 GPU-only SSL/监督训练、回传哈希与本地 smoke 均已验收。`aflow_noleak_v4_seed42` 保留为 immutable 可复现基线。
+项目主链保持不变：
 
-### Latest formal result (v5)
+```text
+完整 line-mode E(k)
+  → (N,2,128,3) 6D tensor + segment IDs
+  → Transformer / Masked Band Modeling
+  → learned soft-extremum gap + metal/direct/indirect head
+  → tkinter Plot-to-Physics
+```
 
-- SSL best epoch 39；stopped epoch 54；best val masked MSE 0.384270，masked MAE 0.395004。
-- Supervised inner best gap epoch 52；完整运行 60 epochs；inner best gap MAE 0.000341 eV。
-- Outer line-mode gap MAE 0.000352 eV；RMSE 0.000595 eV；R² 1.000000。
-- Outer model-vs-global-DFT gap MAE 0.640281 eV；不得与 line-mode 指标混称。
-- Type accuracy 0.941186；Macro F1 0.932648；direct-gap recall 0.943662。
-- 正式设备 Tesla V100-SXM2-16GB；GPU0 max utilization 89%，max memory 15,114 MiB；无 CPU fallback。
-- Latest report：`artifacts/reports/aflow_noleak_v5_30k_seed42/latest_training_report_20260825.md`。
+当前正在执行经批准的 `aflow_noleak_v6_30k_seed42_metricfix`。代码修复、结构图/流程图、本地 RTX 4060 SSL smoke 和监督 `train-only → evaluation-only` smoke 已通过；服务器 V100 正式训练尚未启动，不能预填 v6 指标。
 
-### Retained formal baseline (v4)
+## Why v6 Is Required
 
-- Outer line-mode gap MAE 0.049747 eV；Type accuracy 0.865683；Macro F1 0.858339。
-- 报告：`artifacts/reports/aflow_noleak_v4_seed42/latest_training_report_20260824.md`。
-- 旧 6399/6443 target-conditioned 模型与报告仅为 legacy diagnostic，未进入当前 artifacts。
+v5 `aflow_noleak_v5_30k_seed42` 的字节资产仍完整，但监督模型选择被审计判定无效：
 
-### v5 data acceptance
+- custom `train_step/test_step` 返回当前 batch 裸标量，没有 epoch trackers；
+- batch size=32，inner train/val=20,329/3,604，末批=9/20；
+- 60 个 train accuracy 全是 `1/9` 倍数，60 个 val accuracy 全是 `1/20` 倍数；
+- reported best epoch 52 / inner gap MAE 只代表最后 20 条 validation 样本；
+- 已保存 artifacts 无法恢复每 epoch 的正确全 validation 指标。
 
-- Raw snapshot：30,000 HDF5 groups、30,000 JSON、0 temporary groups；HDF5 SHA-256 `d9927f0425de6232a24b8cea2eb8d0c5820e0aa9e29222b7feb621ebc7be08f3`。
-- Raw JSON hash manifest：30,000 entries；SHA-256 `d90e6f9fd1289207ad00195f105bb34895186cbd522e1596669634084dc48625`。
-- Metadata candidates：80,856；permanent exclusions：14,141；最终 resume success/no-data/failed：7,307/5,110/64。
-- 有效 tensor：29,952；skipped 48；outer train/test：23,933/6,019；space groups：161/45；overlap=0。
-- Full/split NPZ SHA-256：`9c5edea5e97f1c9b2561bc1c2324bcdd22741b5aea69e7d7c4c25116375a1ff7` / `c99d21647489bec3c4a20cafd209ef136b83da966af67e0594f4dc5d0aa5b7a5`。
-- Class counts train metal/direct/indirect：11,024/3,681/9,228；outer：2,768/923/2,328。
-- v4 raw HDF5/metadata 已 byte-identical 恢复，v4 relocation tests 通过。
+此外：
 
-## Project Layout
+- line-mode target 是输入函数 `min(CBM_E)-max(VBM_E)`；解析 baseline MAE/RMSE=0；
+- v5 模型 learned soft-extremum MAE/RMSE=0.000352150/0.001863863 eV，是近似误差而非独立 DFT 预测精度；
+- model-vs-global-DFT MAE=0.640281 eV；
+- v5 type accuracy/Macro F1=0.947333/0.932648，spacegroup-macro accuracy=0.939857；
+- outer provider-metal/line-mode mismatch=1,257/6,019，mismatch subset accuracy 约 0.78998；
+- v5 MC raw 95% interval coverage 约 0.898，旧 1.0 是加入 0.5 eV tolerance 后的 diagnostic。
 
-- `data/raw/aflow/aflow_bands.h5`：byte-identical v4 6,443 baseline；`data/raw/aflow/snapshots/aflow_30000_20260825/`：immutable v5 raw snapshot。
-- `data/processed/aflow/ood_tensors/`：v4 张量；`data/processed/aflow/ood_tensors_v5_30000_seed42/`：v5 已验收张量。
-- `artifacts/{models,checkpoints,reports,logs}/aflow_noleak_v5_30k_seed42/`：latest accepted；v4 同名四类目录保留为 baseline。
-- `src/{data,engine,models,utils,vision}/`：原有实现模块，不建立并列框架。
-- `scripts/`：稳定入口；分类说明在 `scripts/README.md`。
-- `PROJECT_BRAIN/`：宪法、上下文、迁移 manifest 与日期日志。
-- 外层 `资料/`：参考论文/文档/图片，不属于运行根目录。
+v5 保留为 `immutable historical run with invalid checkpoint selection`。61 个现存 v5 artifact 的统一哈希清单：
 
-## Data Layer
+`PROJECT_BRAIN/transfer_manifests/v5_consolidated_artifact_inventory_20260827.json`
 
-### AFLOW
+## Immutable Data Inputs
 
-- v4 baseline HDF5：6,443 groups；SHA-256 `bb261f1e3b3f602e3463ca32831e15b67f53bd5f9f2d951614ec1441b8c0b62d`；metadata SHA-256 `daf662506f33fe990da97548afbbfb85c21add20566447651855c612608d2eff`。
-- v5 snapshot：30,000 groups/JSON；HDF5 SHA-256 `d9927f0425de6232a24b8cea2eb8d0c5820e0aa9e29222b7feb621ebc7be08f3`；逐 JSON hash manifest 已保存。
-- v4 baseline 与 v5 snapshot 物理分离；以后任何继续扩容都必须建立新 snapshot，不得原地追加 immutable 文件。
-- 早期 smoke 中有 20 个不属于正式快照的唯一 ID；保存在 `data/raw/aflow/supplemental/`。
-- 2 个 legacy HDF5 与 canonical 的同 ID group 内容不同，完整变体保存在 `data/raw/aflow/provenance/h5_variants/`。
+### v5 30k raw
 
-### Future download/cache reliability contract (implemented 2026-08-26)
+- path: `data/raw/aflow/snapshots/aflow_30000_20260825/`
+- HDF5 groups: 30,000；temporary groups: 0
+- HDF5 SHA-256: `d9927f0425de6232a24b8cea2eb8d0c5820e0aa9e29222b7feb621ebc7be08f3`
+- raw JSON: 30,000
 
-- `src/data/band_store.py` 现按稳定物理语义哈希处理同 ID：真实 v4/v5 legacy root/metadata 重叠 schema 可幂等读取；identity/provenance、`source_efermi_absolute`、缺失/`None` 被排除，group 实际 datasets/attrs 会重算而不盲信 stored hash。相同内容跳过，不同内容保留 canonical 并隔离为 variant。
-- HDF5 commit/readback/metadata reconciliation 与完整 downloader run 均有跨进程 single-writer lock；WSL/POSIX 与原生 Windows `msvcrt` 均通过真实 child-process contention 探针。
-- candidate catalog/cursor 与 canonical metadata sidecar 分离；metadata rich fold 不允许空值降级，历史 duplicate 与 incoming 非空冲突均写幂等 provenance audit；HDF5 不存在时 stale canonical IDs 也会清除。
-- metadata canonical + conflict provenance 使用 write-ahead transaction；其它 JSON 使用 fsync temporary + same-directory replace，并在 POSIX 同步父目录。中断后 journal 可重放，不留下永久半提交状态。
-- AFLUX cursor v2 固定 `page_size`、把 page size 纳入 query fingerprint，并逐 gap-bin 保存未消费页尾；candidate hard limit 不越界，duplicate page/真实耗尽分离，空 gap-bin quota 可转移。
-- concurrent futures 每项完成后立即由协调线程处理；peer `KeyboardInterrupt/SystemExit` 不丢失同批已完成 exclusion/save/stats。MP batch 返回 cardinality 不一致即 fail-fast；`peak_in_flight <= workers` 且 HDF5 save 仍位于协调线程。
-- report 主口径为 persisted canonical count，并包含 `target_reached`/`termination_reason`；target 未达抛非零异常。full pipeline 在 tensor/training 前复核 HDF5 count/report，并在结束前对未显式跳过阶段的 required artifacts 执行 fail-closed gate。
-- 本轮只使用临时测试 cache，未对 v4/v5 immutable snapshots 执行 downloader、metadata 对账或任何写操作；Phase C 仍为 pending。
+### v5 processed tensor
 
-### Materials Project
+- path: `data/processed/aflow/ood_tensors_v5_30000_seed42/`
+- full shape: `(29952,2,128,3)`
+- outer train/test: 23,933 / 6,019
+- train/test spacegroups: 161 / 45；overlap=0
+- full NPZ SHA-256: `9c5edea5e97f1c9b2561bc1c2324bcdd22741b5aea69e7d7c4c25116375a1ff7`
+- split NPZ SHA-256: `c99d21647489bec3c4a20cafd209ef136b83da966af67e0594f4dc5d0aa5b7a5`
 
-- 已有 smoke 下载合并为 12 unique groups、12 JSON、3000 条 candidate metadata。
-- 原下载报告保存在 `data/raw/materials_project/provenance/legacy_reports/`。
-- API key 有效，但出口 IP/ASN 封禁问题尚未解除；不得通过换 key 规避。
+v6 只读复用上述输入；`--fresh` 和 downloader/tensor builder 均不得删除、扩展或重建显式 raw/ood 输入。
 
-## Tensor and Split Layer
+### retained v4
 
-- v4 tensor：`(6441,2,128,3)`；outer train/test 5,153/1,288；groups 146/37；overlap=0。
-- v5 tensor：`(29952,2,128,3)`；outer train/test 23,933/6,019；groups 161/45；overlap=0；48 records skipped with reasons in manifest。
-- AFLOW energy reference：canonical `E_F=0`；绝对 `Efermi` 仅作 provenance。
-- Label-free occupied/empty edge envelopes + PCHIP。
-- Segment-aware curvature、crossing、span masking 与 physics loss。
-- NPZ 保存 `segment_ids_*` 与 symmetry labels。
-- Manifest 保存 composition/prototype/source overlap、metal mismatch 与输入/输出 SHA-256。
-- Full/split NPZ 与迁移前原始 hashes 字节级一致。
+- raw groups: 6,443
+- raw SHA-256: `bb261f1e3b3f602e3463ca32831e15b67f53bd5f9f2d951614ec1441b8c0b62d`
+- v4 model-brain manifest 的 `created_at` 在 2026-08-27 audit 中被历史 `--status-only` 副作用重生成；raw/tensor/model/checkpoint/predictions 未变化。
+- incident: `PROJECT_BRAIN/transfer_manifests/v4_manifest_regeneration_incident_20260827.json`
+- `run_full_pipeline --status-only` 现已 TDD 保护为 no-write。
 
-## Training Layer
-
-### SSL / Phase B
-
-已实现并正式训练：
-
-- learnable mask token；
-- 5–15 点 segment-aware span masking；
-- masked-position MSE/MAE 与 actual mask fraction；
-- segment-aware curvature/symmetry loss；
-- warmup+cosine；
-- global gradient clipping；
-- best/last/resume checkpoint；
-- early stopping。
+## v6 Code Contracts Implemented Locally
 
 ### Supervised
 
-- 冻结前 2/4 Transformer blocks；
-- encoder effective LR 1e-5，heads LR 1e-3；
-- class weights、极值期望 gap head、type head 和物理辅助损失；
-- legacy metal anchor gate=False；
-- outer test evaluation-only；
-- Keras XLA JIT 显式关闭，避免 V100 cuDNN autotuner 不兼容；
-- post-processing latent feature extraction 使用 batch_size=128，避免 29,952 样本一次性 attention OOM；
-- `--evaluation-only` 可从 best checkpoint/history 恢复评估而不重跑 fit。
+- Keras stateful full-epoch trackers：gap loss/MAE、weighted type loss、accuracy、Macro F1、auxiliary terms；
+- aggregate `val_loss` 是唯一 canonical checkpoint/early-stop monitor；
+- `best.weights.h5`、`last.weights.h5`、accepted-restored-best 三态分离；
+- `inner_selection_manifest.json` 在 outer access 前冻结三态 bytes/SHA；
+- `--train-only` 不读取 outer arrays 或 outer sample manifest；
+- `--evaluation-only` 在 outer load 前回验 selection manifest；
+- SSL-only mask token、projection/reconstruction heads 在 supervised 阶段冻结；
+- whole-path k-warp augmentation 默认 OFF；
+- report/runtime config 使用 experiment/source/date/project-relative paths；
+- analytic baseline、global DFT residual、sample/group/mismatch metrics 分 scope；
+- parity 图不再把 line-mode target 标成 DFT gap；
+- segment-aware post-hoc curvature；
+- MC raw/tolerance coverage 分开，MC batch_size 真正有界。
 
-正式 v5 SSL 与 supervised 均在 Tesla V100 上执行。环境为 TF 2.21、CUDA runtime/NVCC 12.5.82、cuDNN 9.3.0.75；GPU forward/backward、训练 monitor 与 accepted model reload 均有磁盘证据，无 CPU fallback。
+### SSL
 
-### Known metric boundaries
+- actual span mask 每样本强制落在 15–30%，目标 25%；
+- segment-safe span union；
+- validation mask 由 `random_state + batch_index` stateless 固定；
+- MSE/MAE 按 masked elements、mask fraction 按 positions、辅助项按 samples 加权；
+- `ssl_history.json` 每 epoch 原子写入；
+- dimensionally invalid curvature-magnitude consistency 默认 `0.0` 且不能被 adaptive scheduler 复活；
+- curvature-sign loss保留；
+- whole-path strain heuristic 默认 OFF；
+- SSL encoder/reconstruction tensor 必须位于 GPU when `--require-gpu`。
 
-- `best_inner_val_gap_mae=0.000341 eV` 只用于 checkpoint 选择。
-- outer line-mode tensor-gap MAE 为 0.000352 eV；model-vs-global-DFT gap MAE 为 0.640281 eV。
-- direct-gap recall 0.943662；Macro F1 0.932648。
-- composition overlap=1,474；当前只可称 space-group OOD。
-- MC-dropout 尚未完成独立 calibration，不能直接作为 DFT acquisition 置信区间。
+### Pipeline
 
-## GUI / Vision
+- explicit `--experiment-id` / `--raw-h5` / `--ood-dir` / `--report-date`；
+- v4 默认 layout 保留用于历史复现；
+- explicit v6 artifacts 与 v4/v5 隔离；
+- immutable raw/OOD inputs 不下载、不清理、不重建；
+- supervised 固定两阶段：train-only 后 evaluation-only；
+- v6 required artifacts 新增 supervised best/last/selection manifest；
+- `--status-only` no-write；
+- required-artifact gate 继续 fail-closed。
 
-- 原生 tkinter 是唯一 GUI。
-- 人工坐标轴/Fermi/VBM/CBM 标定与物理模型调用路径保留。
-- 最新 vision detector 权重在迁移前 artifacts 中不存在；自动检测不得声称已验收。
-- `brain_invoker.py` 默认路径与 GUI t-SNE 已切换到 `aflow_noleak_v5_30k_seed42`，并有回归测试保证文件存在。
+## Local Verification So Far
 
-## Verification Evidence
+- pre-v6 baseline：`92 passed in 414.21s`；
+- 修复后 Stage-0：`116 passed in 27.39s`；
+- 最新完整 WSL compileall + pytest：compileall exit 0；`134 passed in 225.90s`；
+- local supervised smoke：1 epoch on RTX 4060，aggregate metrics、best/last/accepted、train-only outer isolation 全通过；
+- local evaluation-only smoke：selection hash gate、64 outer samples、MC/report/plots、accepted hash unchanged 全通过；
+- local SSL smoke：1 epoch，val actual mask≈0.25015、symmetry weight=0、best/last/history/model 全通过；
+- 最终 compile/full pytest、immutable rehash 与 diff check 仍需在同步前重跑。
 
-- Final WSL compileall + pytest（2026-08-26 late-review hardening 后）：compileall exit 0；Stage-0 `74 passed in 21.40s`；完整回归 `92 passed in 217.63s`。
-- `tests/smoke_latest_model.py`：实际加载 v5 split、norm、SSL `.keras` 和监督 weights；2 条 outer OOD 推理 gap/type 均有限、type probability sums=1，portable local paths 生效。
-- Immutable readback：v4/v5 HDF5 groups=6,443/30,000、temporary groups=0；v5 full/split shapes 与 manifests 相等；四个 SHA-256 全匹配，`mismatches=[]`。
-- Lock portability：4 个 WSL child-process contention 回归通过；原生 Windows msvcrt child-process probe 输出 `WINDOWS_CHILD_LOCK_REJECTED`、exit 0。
-- 服务器 accepted-model reload：gap/type tensors 均在 `/GPU:0`，finite=True；formal status=`all/completed`。
-- GPU monitor：145 samples；GPU0 max utilization 89%，max memory 15,114/16,384 MiB。
-- Server transfer：30,069 archive members；server receive verification 逐文件 SHA mismatch=0。
-- Returned results：63 archive members；62 content files 独立 hash validation 全通过；artifact manifest 50 files/75,143,804 bytes mismatch=0。
-- Data：v4 6,443 baseline + immutable v5 30,000 snapshot；v5 tensor 29,952、outer 23,933/6,019、group overlap 0。
-- `git diff --check` exit 0；仅有既有 Git LF→CRLF warning，无空白错误。
+## Diagrams
 
-## Current Blockers
+当前：
 
-1. Phase C 尚未冻结 crystal structure schema、统一 k-path 和 multi-band target contract。
-2. 当前结构数据不完整；AFLOW band cache 不能直接提供训练 crystal graph 所需的 lattice/species/fractional coordinates 全合同。
-3. 只有 seed=42；3-seed 方差与 composition/prototype/source 多维 OOD 未完成。
-4. uncertainty calibration 与 active-learning acquisition function 未验收。
-5. MP 双源正式数据仍受网络封禁阻塞。
+- `PROJECT_BRAIN/diagrams/project_structure_diagram_20260827.html/.png`
+- `PROJECT_BRAIN/diagrams/runtime_flow_diagram_20260827.html/.png`
 
-## Next Authorized Planning Target
+PNG 以 1600×1500 重渲染并完成视觉检查；主图、四卡片、footer 无裁切/明显重叠。20260824 v4 图保留为 historical snapshot。
 
-下一阶段只做 Phase C 合同与最小数据闭环，不直接重写模型。执行顺序见：
+## Remote Server Preflight
 
-`PROJECT_BRAIN/agent_logs/20260824_next_work_schedule.md`
+只读 preflight 已完成：
+
+- Linux；24 logical CPUs；约 66 GB RAM；约 3.23 TB free；
+- 2× Tesla V100-SXM2-16GB，盘点时均空闲；
+- Conda env `bandstructure_gpu30k` 存在；
+- TensorFlow 2.21，CUDA build 12.5.1，包含 sm_70；
+- Conv1D forward/backward 位于 `/GPU:0`，gradients finite；
+- remote v5 data/model/predictions 与 local hashes 一致；
+- remote code 落后于本机当前 metric-fix branch；同步方向应为本地 canonical core → 服务器，不重传相同 v5 data/artifacts。
+
+连接信息和密码不得写入项目或报告。
+
+## Next Execution Steps
+
+1. 完成 final full pytest、diff/line endings、immutable hash gate；
+2. 形成 v6 metric-fix canonical commit/tag；
+3. 生成 secret-excluded core sync manifest/archive；
+4. staging 上传、逐文件回验、远端 compile/full pytest；
+5. V100 一轮 SSL/supervised smoke；
+6. 新 ID 下完整 SSL → supervised train-only → evaluation-only；
+7. 回传 v6 models/checkpoints/logs/predictions/reports/manifests；
+8. 本地重算 metrics、模型加载/forward、v4/v5 rehash；
+9. 全部通过后才 promote v6，并更新 dated schedule/final report。
+
+## Current Blockers / Deferred Scope
+
+- v6 正式训练尚未完成；
+- 只有 seed=42；3-seed 与 group-bootstrap 留到新日程；
+- Phase C crystal structure schema、统一 k-path、multi-band target 与新 OOD 合同尚未冻结；
+- Materials Project 正式双源仍受出口网络封禁；
+- 当前模型仍是 E(k) analyzer，不是 structure→bands predictor。

@@ -3,6 +3,7 @@ SSL trainer for Masked Band Modeling with physics-loss monitoring.
 """
 from __future__ import annotations
 
+import json
 import os
 import time
 from typing import Dict
@@ -46,22 +47,78 @@ def random_span_mask(
     min_span: int,
     max_span: int,
     segment_ids: tf.Tensor | None,
+    seed: tf.Tensor | None = None,
 ) -> tf.Tensor:
-    """Sample approximate-ratio contiguous spans for each sequence."""
-    span_length = tf.random.uniform([], min_span, max_span + 1, dtype=tf.int32)
-    num_masked = tf.maximum(
-        1, tf.cast(tf.round(tf.cast(seq_len, tf.float32) * mask_ratio), tf.int32)
+    """Sample segment-safe spans with an enforced 15–30% actual ratio."""
+    batch_size = tf.cast(batch_size, tf.int32)
+    seq_len = tf.cast(seq_len, tf.int32)
+    if seed is None:
+        span_length = tf.random.uniform(
+            [], min_span, max_span + 1, dtype=tf.int32
+        )
+        scores = tf.random.uniform([batch_size, seq_len], dtype=tf.float32)
+    else:
+        split_seeds = tf.random.experimental.stateless_split(
+            tf.cast(seed, tf.int32),
+            2,
+        )
+        span_length = tf.random.stateless_uniform(
+            [],
+            seed=split_seeds[0],
+            minval=min_span,
+            maxval=max_span + 1,
+            dtype=tf.int32,
+        )
+        scores = tf.random.stateless_uniform(
+            [batch_size, seq_len],
+            seed=split_seeds[1],
+            dtype=tf.float32,
+        )
+
+    # Every k position is a candidate span start.  The cumulative union lets us
+    # choose, per sample, the closest coverage to mask_ratio without overlapping
+    # spans or short terminal segments silently dropping below the contract.
+    starts = tf.argsort(scores, axis=1, direction="DESCENDING")
+    positions = tf.range(seq_len, dtype=tf.int32)[None, None, :]
+    start_grid = starts[:, :, None]
+    within = tf.logical_and(
+        positions >= start_grid,
+        positions < start_grid + span_length,
     )
-    num_spans = tf.maximum(
-        1,
-        tf.cast(
-            tf.math.ceil(tf.cast(num_masked, tf.float32) / tf.cast(span_length, tf.float32)),
-            tf.int32,
-        ),
+    if segment_ids is not None:
+        segment_ids = tf.cast(segment_ids, tf.int32)
+        start_segments = tf.gather(segment_ids, starts, batch_dims=1)
+        within = tf.logical_and(
+            within,
+            segment_ids[:, None, :] == start_segments[:, :, None],
+        )
+
+    cumulative = tf.cumsum(tf.cast(within, tf.int32), axis=1) > 0
+    covered = tf.reduce_sum(tf.cast(cumulative, tf.int32), axis=2)
+    minimum = tf.cast(
+        tf.math.ceil(tf.cast(seq_len, tf.float32) * 0.15),
+        tf.int32,
     )
-    scores = tf.random.uniform([batch_size, seq_len], dtype=tf.float32)
-    _, starts = tf.math.top_k(scores, k=num_spans, sorted=False)
-    return span_mask_from_starts(starts, span_length, seq_len, segment_ids)
+    maximum = tf.cast(
+        tf.math.floor(tf.cast(seq_len, tf.float32) * 0.30),
+        tf.int32,
+    )
+    target = tf.cast(
+        tf.round(tf.cast(seq_len, tf.float32) * float(mask_ratio)),
+        tf.int32,
+    )
+    target = tf.clip_by_value(target, minimum, maximum)
+    valid = tf.logical_and(covered >= minimum, covered <= maximum)
+    candidate_index = tf.range(seq_len, dtype=tf.int32)[None, :]
+    distance = tf.abs(covered - target) * (seq_len + 1) + candidate_index
+    invalid_penalty = tf.fill(tf.shape(distance), seq_len * seq_len * 4)
+    choice = tf.argmin(
+        tf.where(valid, distance, invalid_penalty),
+        axis=1,
+        output_type=tf.int32,
+    )
+    mask = tf.gather(cumulative, choice, axis=1, batch_dims=1)
+    return tf.cast(mask[:, :, None], tf.float32)
 
 
 def warmup_cosine_learning_rate(
@@ -103,6 +160,7 @@ class MBMTrainer:
         gradient_clip_norm: float = 1.0,
         early_stopping_patience: int = 15,
         early_stopping_min_delta: float = 1.0e-5,
+        validation_mask_seed: int = 42,
     ):
         self.model = model
         self.base_learning_rate = float(learning_rate)
@@ -111,6 +169,13 @@ class MBMTrainer:
         self.gradient_clip_norm = float(gradient_clip_norm)
         self.early_stopping_patience = max(0, int(early_stopping_patience))
         self.early_stopping_min_delta = float(early_stopping_min_delta)
+        self.validation_mask_seed = int(validation_mask_seed)
+        self.validation_batch_index = tf.Variable(
+            0,
+            trainable=False,
+            dtype=tf.int32,
+            name="validation_batch_index",
+        )
         self.optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
         self.mask_ratio = mask_ratio
         self.min_span = int(min_span)
@@ -119,6 +184,7 @@ class MBMTrainer:
             raise ValueError("span bounds must satisfy 1 <= min_span <= max_span")
         self.curvature_weight = tf.Variable(sign_weight, trainable=False, dtype=tf.float32)
         self.symmetry_weight = tf.Variable(consistency_weight, trainable=False, dtype=tf.float32)
+        self.symmetry_adaptation_enabled = float(consistency_weight) > 0.0
         self.epoch_var = tf.Variable(0, trainable=False, dtype=tf.int64, name="completed_epoch")
         self.best_val_var = tf.Variable(np.inf, trainable=False, dtype=tf.float32, name="best_val")
         self.epochs_without_improvement = tf.Variable(
@@ -128,6 +194,18 @@ class MBMTrainer:
         self.warmup_steps = tf.Variable(0, trainable=False, dtype=tf.int64, name="warmup_steps")
         self.checkpoint_dir = checkpoint_dir
         self.log_dir = log_dir
+        self.history_path = os.path.join(log_dir, "ssl_history.json")
+        self.history = {
+            "schema_version": 1,
+            "selection_monitor": "val_total",
+            "validation_mask_seed": self.validation_mask_seed,
+            "epochs": [],
+        }
+        if os.path.isfile(self.history_path):
+            with open(self.history_path, "r", encoding="utf-8") as handle:
+                existing_history = json.load(handle)
+            if isinstance(existing_history, dict):
+                self.history.update(existing_history)
 
         self.curvature_loss_fn = BandCurvatureLoss()
         self.symmetry_loss_fn = CurvatureConsistencyLoss()
@@ -160,7 +238,15 @@ class MBMTrainer:
             start = time.time()
             train_metrics = self._run_epoch(train_dataset, training=True)
             val_metrics = self._run_epoch(val_dataset, training=False)
+            selection_weights = {
+                "curvature": float(self.curvature_weight.numpy()),
+                "symmetry": float(self.symmetry_weight.numpy()),
+            }
             self._adapt_physics_weights(val_metrics)
+            post_adaptation_weights = {
+                "curvature": float(self.curvature_weight.numpy()),
+                "symmetry": float(self.symmetry_weight.numpy()),
+            }
             current_lr = float(tf.keras.backend.get_value(self.optimizer.learning_rate))
 
             with self.train_writer.as_default():
@@ -193,6 +279,7 @@ class MBMTrainer:
             improved = val_metrics["total"] < (
                 float(self.best_val_var.numpy()) - self.early_stopping_min_delta
             )
+            self.epoch_var.assign(epoch)
             if improved:
                 self.best_val_var.assign(val_metrics["total"])
                 self.epochs_without_improvement.assign(0)
@@ -200,16 +287,43 @@ class MBMTrainer:
             else:
                 self.epochs_without_improvement.assign_add(1)
 
-            self.epoch_var.assign(epoch)
             self.save_checkpoint("last")
             if epoch % 10 == 0:
                 self.save_checkpoint(str(epoch))
+            self.history["epochs"] = [
+                item
+                for item in self.history.get("epochs", [])
+                if int(item.get("epoch", -1)) < epoch
+            ]
+            self.history["epochs"].append(
+                {
+                    "epoch": epoch,
+                    "train": train_metrics,
+                    "val": val_metrics,
+                    "learning_rate": current_lr,
+                    "selection_weights": selection_weights,
+                    "post_adaptation_weights": post_adaptation_weights,
+                    "curvature_weight": post_adaptation_weights["curvature"],
+                    "symmetry_weight": post_adaptation_weights["symmetry"],
+                    "improved": bool(improved),
+                    "duration_seconds": float(time.time() - start),
+                }
+            )
+            self._write_history()
             if (
                 self.early_stopping_patience > 0
                 and int(self.epochs_without_improvement.numpy()) >= self.early_stopping_patience
             ):
                 print(f"Early stopping at epoch {epoch}: no improvement for {self.early_stopping_patience} epochs")
                 break
+
+    def _write_history(self) -> None:
+        temporary = self.history_path + ".tmp"
+        with open(temporary, "w", encoding="utf-8") as handle:
+            json.dump(self.history, handle, indent=2, ensure_ascii=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, self.history_path)
 
     def _adapt_physics_weights(self, val_metrics: Dict[str, float]) -> None:
         """Proportionally adjust physics-loss weights based on validation metrics.
@@ -229,35 +343,71 @@ class MBMTrainer:
         else:
             self.curvature_weight.assign(tf.maximum(self.curvature_weight * 0.995, 0.05))
 
-        # Symmetry: grow when it dominates MSE, decay otherwise
-        if sym > mse * 0.5:
+        # Magnitude consistency may be hard-disabled because standardized
+        # curvature and index-space energy differences do not share units.
+        if not self.symmetry_adaptation_enabled:
+            self.symmetry_weight.assign(0.0)
+        elif sym > mse * 0.5:
             self.symmetry_weight.assign(tf.minimum(self.symmetry_weight * 1.03, 5.0))
         else:
             self.symmetry_weight.assign(tf.maximum(self.symmetry_weight * 0.997, 0.01))
 
     def _run_epoch(self, dataset: tf.data.Dataset, training: bool) -> Dict[str, float]:
-        totals = {
-            "total": [],
-            "mse_loss": [],
-            "masked_mae": [],
-            "mask_fraction": [],
-            "curvature_loss": [],
-            "symmetry_loss": [],
-        }
-        for data in dataset:
+        keys = (
+            "total",
+            "mse_loss",
+            "masked_mae",
+            "mask_fraction",
+            "curvature_loss",
+            "symmetry_loss",
+        )
+        numerators = {key: 0.0 for key in keys}
+        denominators = {key: 0.0 for key in keys}
+        for batch_index, data in enumerate(dataset):
             if len(data) == 3:
                 batch, _groups, segment_ids = data
             else:
                 batch, _groups = data
                 segment_ids = None
-            metrics = (
-                self._train_step(batch, segment_ids)
-                if training
-                else self._val_step(batch, segment_ids)
+            if training:
+                metrics = self._train_step(batch, segment_ids)
+            else:
+                if hasattr(self, "validation_batch_index"):
+                    self.validation_batch_index.assign(batch_index)
+                metrics = self._val_step(batch, segment_ids)
+            sample_count = float(
+                metrics.get("sample_count", tf.cast(tf.shape(batch)[0], tf.float32)).numpy()
             )
-            for key in totals:
-                totals[key].append(float(metrics[key].numpy()))
-        return {key: float(np.mean(values)) for key, values in totals.items()}
+            masked_elements = float(
+                metrics.get("masked_elements", tf.constant(sample_count, tf.float32)).numpy()
+            )
+            position_count = float(
+                metrics.get("position_count", tf.constant(sample_count, tf.float32)).numpy()
+            )
+            weights = {
+                "total": sample_count,
+                "mse_loss": masked_elements,
+                "masked_mae": masked_elements,
+                "mask_fraction": position_count,
+                "curvature_loss": sample_count,
+                "symmetry_loss": sample_count,
+            }
+            for key in keys:
+                value = float(metrics[key].numpy())
+                numerators[key] += value * weights[key]
+                denominators[key] += weights[key]
+
+        results = {
+            key: float(numerators[key] / max(denominators[key], 1e-12))
+            for key in keys
+        }
+        if hasattr(self, "curvature_weight") and hasattr(self, "symmetry_weight"):
+            results["total"] = float(
+                results["mse_loss"]
+                + float(self.curvature_weight.numpy()) * results["curvature_loss"]
+                + float(self.symmetry_weight.numpy()) * results["symmetry_loss"]
+            )
+        return results
 
     @tf.function
     def _train_step(self, batch: tf.Tensor, segment_ids: tf.Tensor | None) -> Dict[str, tf.Tensor]:
@@ -297,6 +447,14 @@ class MBMTrainer:
     ) -> Dict[str, tf.Tensor]:
         batch_size = tf.shape(batch)[0]
         seq_len = tf.shape(batch)[1]
+        mask_seed = None
+        if not training:
+            mask_seed = tf.stack(
+                [
+                    tf.cast(self.validation_mask_seed, tf.int32),
+                    tf.cast(self.validation_batch_index, tf.int32),
+                ]
+            )
         mask = random_span_mask(
             batch_size=batch_size,
             seq_len=seq_len,
@@ -304,16 +462,20 @@ class MBMTrainer:
             min_span=self.min_span,
             max_span=self.max_span,
             segment_ids=segment_ids,
+            seed=mask_seed,
         )
 
         masked_batch = self.model.apply_mask_token(batch, mask)
         reconstructed = self.model.reconstruct(masked_batch, training=training)
 
+        masked_positions = tf.reduce_sum(mask)
+        feature_count = tf.cast(tf.shape(batch)[-1], tf.float32)
+        masked_elements = masked_positions * feature_count
         mse_loss = tf.reduce_sum(tf.square(reconstructed - batch) * mask) / (
-            tf.reduce_sum(mask) * tf.cast(tf.shape(batch)[-1], tf.float32) + 1e-8
+            masked_elements + 1e-8
         )
         masked_mae = tf.reduce_sum(tf.abs(reconstructed - batch) * mask) / (
-            tf.reduce_sum(mask) * tf.cast(tf.shape(batch)[-1], tf.float32) + 1e-8
+            masked_elements + 1e-8
         )
         mask_fraction = tf.reduce_mean(mask)
         curvature_loss = self.curvature_loss_fn.call(
@@ -331,6 +493,9 @@ class MBMTrainer:
             "mask_fraction": mask_fraction,
             "curvature_loss": curvature_loss,
             "symmetry_loss": symmetry_loss,
+            "sample_count": tf.cast(batch_size, tf.float32),
+            "masked_elements": masked_elements,
+            "position_count": tf.cast(batch_size * seq_len, tf.float32),
         }
 
     def restore_checkpoint(self, name: str = "last") -> bool:

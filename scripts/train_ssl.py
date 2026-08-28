@@ -34,6 +34,7 @@ from src.data.band_structure_dataset import VirtualStrainAugmentation
 from src.engine.ssl_trainer import MBMTrainer as PhysicsMBMTrainer
 from src.models.band_structure_encoder import SSLEncoder
 from src.data.ood_tensor_builder import build_group_validation_split
+from src.utils import assert_tensor_on_gpu
 
 
 def configure_tensorflow_runtime(require_gpu: bool = False) -> None:
@@ -167,7 +168,19 @@ def run_tensor_mbm(args: argparse.Namespace) -> None:
         projection_dim=args.projection_dim,
         dropout_rate=args.dropout,
     )
-    model(tf.zeros([1, seq_len, num_features], dtype=tf.float32), training=False)
+    probe_input = tf.zeros([1, seq_len, num_features], dtype=tf.float32)
+    probe_embedding = model(probe_input, training=False)
+    probe_reconstruction = model.reconstruct(probe_input, training=False)
+    assert_tensor_on_gpu(
+        probe_embedding,
+        "SSL encoder forward",
+        require_gpu=args.require_gpu,
+    )
+    assert_tensor_on_gpu(
+        probe_reconstruction,
+        "SSL reconstruction forward",
+        require_gpu=args.require_gpu,
+    )
 
     trainer = PhysicsMBMTrainer(
         model=model,
@@ -184,6 +197,7 @@ def run_tensor_mbm(args: argparse.Namespace) -> None:
         gradient_clip_norm=args.gradient_clip_norm,
         early_stopping_patience=args.early_stopping_patience,
         early_stopping_min_delta=args.early_stopping_min_delta,
+        validation_mask_seed=args.random_state,
     )
     if args.resume:
         trainer.restore_checkpoint("last")
@@ -223,7 +237,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--early-stopping-min-delta", type=float, default=1e-5)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--sign-weight", type=float, default=0.5)
-    parser.add_argument("--consistency-weight", type=float, default=0.1)
+    parser.add_argument(
+        "--consistency-weight",
+        type=float,
+        default=0.0,
+        help="curvature-magnitude consistency weight; keep 0 until physical k coordinates are available",
+    )
     parser.add_argument("--d-model", type=int, default=128)
     parser.add_argument("--num-heads", type=int, default=4)
     parser.add_argument("--num-layers", type=int, default=4)
@@ -231,7 +250,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--projection-dim", type=int, default=64)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--strain-scale", type=float, default=0.01)
-    parser.add_argument("--disable-strain-augmentation", action="store_true")
+    parser.add_argument(
+        "--disable-strain-augmentation",
+        dest="disable_strain_augmentation",
+        action="store_true",
+        help="disable the experimental whole-path k-warp augmentation (default)",
+    )
+    parser.add_argument(
+        "--enable-strain-augmentation",
+        dest="disable_strain_augmentation",
+        action="store_false",
+        help="explicitly enable the experimental, non-physical whole-path k-warp",
+    )
+    parser.set_defaults(disable_strain_augmentation=True)
     parser.add_argument("--checkpoint-dir", default="./artifacts/checkpoints/mp/ssl_mbm")
     parser.add_argument("--log-dir", default="./artifacts/logs/mp/ssl_mbm")
     parser.add_argument("--model-dir", default="./artifacts/models/mp")

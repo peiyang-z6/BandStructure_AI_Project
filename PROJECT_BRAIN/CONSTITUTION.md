@@ -1,7 +1,7 @@
 # BandStructure AI Project Constitution
 
-Version: 4.8
-Updated: 2026-08-26
+Version: 4.9
+Updated: 2026-08-27
 Status: active project rules
 
 ## 1. Mission
@@ -49,7 +49,7 @@ BandStructure_AI_Project/
 └── PROJECT_BRAIN/
 ```
 
-- 当前 latest accepted experiment 为 `aflow_noleak_v5_30k_seed42`，四类 artifact 必须使用同名目录；`aflow_noleak_v4_seed42` 作为 immutable baseline 保留。
+- `aflow_noleak_v5_30k_seed42` 保留为 immutable historical run；2026-08-27 审计确认其 supervised checkpoint selection 只代表最后 20 条 validation 样本，不能继续作为无保留的科学 latest accepted。`aflow_noleak_v6_30k_seed42_metricfix` 在完成服务器 GPU 训练、回传和本地验收前只能称 candidate；`aflow_noleak_v4_seed42` 继续作为 immutable baseline。
 - 不重新创建根级 `data_cache/`、`models/`、`checkpoints/`、`reports/` 或 `logs/`。
 - `src` 的现有责任边界优先于新建平行模块；入口脚本保持稳定，确需移动时必须先加路径回归测试。
 - 临时文件、远程连接脚本、`__pycache__`、`.pytest_cache`、下载归档和迁移 quarantine 不得留在最终运行根目录。
@@ -76,7 +76,9 @@ BandStructure_AI_Project/
 
 - 外层 OOD 以 `spacegroup_number` 为 group key；固定 `train_size=0.8`、`random_state=42`、group overlap=0。
 - 外层 OOD test 仅用于训练结束后的最终评估；不得用于 early stopping、checkpoint、学习率、阈值、calibration、超参数选择或归一化。
-- 模型选择只使用 outer-train 内部的 group-disjoint validation。
+- canonical supervised 执行必须拆成 `train-only` 与 `evaluation-only`：train-only 不得读取 outer arrays、outer class/group statistics 或 outer sample manifest；best/last/accepted 的 bytes/SHA 和 aggregate inner monitor 冻结后，evaluation-only 才可加载 outer test。
+- 模型选择只使用 outer-train 内部的 group-disjoint validation，并基于完整 validation 聚合；最后一个 batch 的裸标量不得作为 epoch metric 或 checkpoint monitor。
+- 当前 OOD 只能准确命名为 **space-group-disjoint OOD**；没有独立证据时不得声称 composition/prototype/source OOD。
 - provider 标签只能作为 target/audit，不得改变输入能带选择、费米锚定、mask、插值或 feature construction。
 - fallback 标签必须在 manifest/report 标注，不能包装成独立标签验证。
 - composition/prototype/source overlap 必须与 space-group overlap 分开报告。
@@ -100,6 +102,7 @@ flattened input: (N, seq_len, 6)
 - 自旋极化数据不得只取第一个 spin channel。
 - 无倒易长度单位时只能报告 relative curvature proxy，不能伪称以 `m_e` 为单位的有效质量。
 - line-mode crossing、tensor gap 和 provider global gap 必须分开命名。
+- 当 regression target 等于输入函数 `min(CBM_E)-max(VBM_E)` 时，报告必须同时给出解析 identity baseline（MAE/RMSE=0）并将 learned head 解释为 soft-extremum approximation；不得包装为独立 DFT 或未知结构预测精度。
 
 ## 7. Training Rules
 
@@ -107,24 +110,29 @@ flattened input: (N, seq_len, 6)
 
 - learnable mask token；
 - 5–15 point segment-aware span masking；
-- mask ratio 15–30%；
-- masked-position MSE/MAE 与 actual mask fraction；
-- segment-aware curvature/symmetry loss；
+- **实际** per-sample mask fraction 必须在 15–30%，不能只检查请求参数；span overlap/segment truncation 后必须补足或重新选择；
+- training corruption 可随机，inner validation corruption 必须由固定 stateless seed 复现；
+- masked-position MSE/MAE 按真实 masked elements 加权，mask fraction 按 positions，加权结果进入 machine-readable history；
+- curvature-sign loss 可在 segment 内使用；没有物理 k-coordinate/统一量纲时，curvature-magnitude consistency 必须 hard-disabled 且自适应调度不得复活；
+- whole-path index warp 不得称为真实 lattice strain，且在未实现 segment-aware/structure-aware 合同前默认关闭；
 - 单一 warmup+cosine schedule；
 - gradient clipping；
-- best/last checkpoint、resume 与 early stopping。
+- best/last checkpoint、resume、atomic history 与 early stopping。
 
 ### Supervised
 
-- 冻结早期 encoder 层并使用分层有效学习率；
+- 冻结早期 encoder 层，并冻结 supervised forward 不使用的 SSL projection/reconstruction heads 与 mask token；
 - 极值期望 gap head、type head 与审计明确的物理辅助损失；
-- 归一化统计只来自训练子集；
+- 归一化统计只来自 inner-fit；
+- epoch loss/MAE/accuracy/Macro F1 必须用 stateful trackers 覆盖完整数据，canonical checkpoint/early stopping 监控 aggregate inner `val_loss`；
+- 必须分别保存 canonical best、final/last 与 accepted-restored-best，并在 outer access 前写入 bytes/SHA selection manifest；
 - legacy zero-gap/metal anchor gate 默认关闭；
+- whole-path augmentation 默认关闭；
 - 类别权重和阈值只能由 inner validation 确定。
 
-冒烟只能验证可运行性，不得作为科研精度结论。监督物理分数与 SSL reconstruction 物理分数必须分开报告。
+冒烟只能验证可运行性，不得作为科研精度结论。监督物理分数与 SSL reconstruction 物理分数必须分开报告。正式分类报告至少包含 sample-weighted、group-macro 和 provider/feature mismatch strata；MC uncertainty 必须分开 raw interval coverage 与 tolerance diagnostic，后者不得命名为校准置信区间。
 
-正式训练至少保留：数据/代码 manifest、配置、best/last 状态、完整日志、预测、最终 metrics 与 artifact SHA-256。
+正式训练至少保留：数据/代码 manifest、配置、best/last/accepted 状态、完整日志、预测、最终 metrics 与 artifact SHA-256。
 
 ## 8. Phase C Extension Rules
 

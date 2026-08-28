@@ -18,7 +18,7 @@ import shutil
 import subprocess
 import sys
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Dict, List
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,6 +47,7 @@ def build_finetune_command(
     args: argparse.Namespace,
     paths: Dict[str, str],
     ood_split: str,
+    mode: str | None = None,
 ) -> List[str]:
     """Build the supervised command and preserve top-level GPU requirements."""
     command = [
@@ -85,6 +86,87 @@ def build_finetune_command(
         "--model-path",
         paths["finetuned_weights"],
     ]
+    for flag, value in (
+        ("--experiment-id", getattr(args, "experiment_id", None)),
+        ("--source", getattr(args, "source", None)),
+        ("--report-date", getattr(args, "report_date", None)),
+    ):
+        if value is not None:
+            command.extend([flag, str(value)])
+    if args.require_gpu:
+        command.append("--require-gpu")
+    if mode == "train":
+        command.append("--train-only")
+    elif mode == "evaluate":
+        command.append("--evaluation-only")
+    elif mode is not None:
+        raise ValueError(f"Unknown supervised pipeline mode: {mode}")
+    return command
+
+
+def run_supervised_stages(
+    args: argparse.Namespace,
+    paths: Dict[str, str],
+    ood_split: str,
+) -> None:
+    """Freeze inner-selected states before starting outer OOD evaluation."""
+    run_command(
+        build_finetune_command(args, paths, ood_split, mode="train"),
+        "Supervised inner-only training and checkpoint selection",
+    )
+    run_command(
+        build_finetune_command(args, paths, ood_split, mode="evaluate"),
+        "Frozen-checkpoint outer OOD evaluation",
+    )
+
+
+def build_ssl_command(
+    args: argparse.Namespace,
+    paths: Dict[str, str],
+    ood_split: str,
+) -> List[str]:
+    """Build a fully explicit, auditable SSL command."""
+    command = [
+        sys.executable,
+        "scripts/train_ssl.py",
+        "--tensor-npz",
+        ood_split,
+        "--epochs",
+        str(args.ssl_epochs),
+        "--batch-size",
+        str(args.ssl_batch_size),
+        "--mask-ratio",
+        str(args.mask_ratio),
+        "--random-state",
+        str(args.random_state),
+        "--sign-weight",
+        str(args.sign_weight),
+        "--consistency-weight",
+        str(args.consistency_weight),
+        "--d-model",
+        str(args.d_model),
+        "--num-heads",
+        str(args.num_heads),
+        "--num-layers",
+        str(args.num_layers),
+        "--dff",
+        str(args.dff),
+        "--projection-dim",
+        str(args.projection_dim),
+        "--strain-scale",
+        str(args.strain_scale),
+        "--checkpoint-dir",
+        paths["ssl_checkpoint_dir"],
+        "--log-dir",
+        paths["ssl_log_dir"],
+        "--model-dir",
+        paths["model_dir"],
+    ]
+    command.append(
+        "--disable-strain-augmentation"
+        if args.disable_strain_augmentation
+        else "--enable-strain-augmentation"
+    )
     if args.require_gpu:
         command.append("--require-gpu")
     return command
@@ -155,21 +237,96 @@ def validate_download_gate(
     return report
 
 
-def pipeline_layout(source: str = "mp") -> Dict[str, str]:
-    """Return source-isolated paths in the classified project layout."""
+def _validated_input_path(
+    path: str,
+    *,
+    expected_prefix: tuple[str, ...],
+    label: str,
+    required_suffix: str | None = None,
+) -> str:
+    normalized = PurePosixPath(str(path).replace("\\", "/"))
+    if normalized.is_absolute() or ".." in normalized.parts:
+        raise ValueError(f"Unsafe explicit {label}: {path!r}")
+    if tuple(normalized.parts[: len(expected_prefix)]) != expected_prefix:
+        raise ValueError(
+            f"Explicit {label} must stay under {'/'.join(expected_prefix)}/: {path!r}"
+        )
+    if required_suffix and normalized.suffix.lower() != required_suffix:
+        raise ValueError(
+            f"Explicit {label} must end with {required_suffix}: {path!r}"
+        )
+    return normalized.as_posix()
+
+
+def pipeline_layout(
+    source: str = "mp",
+    *,
+    experiment_id: str | None = None,
+    raw_h5: str | None = None,
+    ood_dir: str | None = None,
+) -> Dict[str, str]:
+    """Return source-isolated paths with optional immutable versioned inputs."""
     source_key = source.lower()
+    if source_key not in {"mp", "aflow"}:
+        raise ValueError(f"Unsupported source: {source!r}")
     source_dir = "materials_project" if source_key == "mp" else source_key
-    experiment_id = "aflow_noleak_v4_seed42" if source_key == "aflow" else source_key
+    explicit_experiment = experiment_id is not None
+    explicit_raw_input = raw_h5 is not None
+    explicit_ood_input = ood_dir is not None
+    if experiment_id is None:
+        experiment_id = "aflow_noleak_v4_seed42" if source_key == "aflow" else source_key
+    if (
+        not experiment_id
+        or not experiment_id[0].isalnum()
+        or any(
+            character
+            not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+            for character in experiment_id
+        )
+    ):
+        raise ValueError(f"Unsafe experiment ID: {experiment_id!r}")
+    if raw_h5 is not None:
+        raw_h5 = _validated_input_path(
+            raw_h5,
+            expected_prefix=("data", "raw", source_dir),
+            label="raw HDF5",
+            required_suffix=".h5",
+        )
+    if ood_dir is not None:
+        ood_dir = _validated_input_path(
+            ood_dir,
+            expected_prefix=("data", "processed", source_dir),
+            label="OOD directory",
+        )
     raw_dir = f"data/raw/{source_dir}"
-    processed_dir = f"data/processed/{source_dir}/ood_tensors"
+    processed_dir = ood_dir or f"data/processed/{source_dir}/ood_tensors"
     model_dir = f"artifacts/models/{experiment_id}"
     report_dir = f"artifacts/reports/{experiment_id}"
     checkpoint_dir = f"artifacts/checkpoints/{experiment_id}"
     log_dir = f"artifacts/logs/{experiment_id}"
     is_formal_aflow = source_key == "aflow"
+    raw_h5_path = raw_h5 or f"{raw_dir}/{source_key}_bands.h5"
+    metadata_path = (
+        PurePosixPath(raw_h5_path).with_name(f"{source_key}_metadata.json").as_posix()
+        if explicit_raw_input
+        else f"{raw_dir}/{source_key}_metadata.json"
+    )
+    raw_snapshot_manifest = (
+        PurePosixPath(raw_h5_path).with_name("raw_snapshot_manifest.json").as_posix()
+        if explicit_raw_input
+        else None
+    )
+    tensor_snapshot_audit = (
+        f"{processed_dir}/tensor_snapshot_audit.json"
+        if explicit_ood_input
+        else None
+    )
     return {
-        "raw_h5": f"{raw_dir}/{source_key}_bands.h5",
-        "metadata": f"{raw_dir}/{source_key}_metadata.json",
+        "experiment_id": experiment_id,
+        "raw_h5": raw_h5_path,
+        "metadata": metadata_path,
+        "raw_snapshot_manifest": raw_snapshot_manifest,
+        "tensor_snapshot_audit": tensor_snapshot_audit,
         "download_report": f"{raw_dir}/{source_key}_download_report.json",
         "json_cache": f"{raw_dir}/json_cache",
         "ood_dir": processed_dir,
@@ -178,20 +335,59 @@ def pipeline_layout(source: str = "mp") -> Dict[str, str]:
         "model_dir": model_dir,
         "finetuned_weights": f"{model_dir}/{'finetuned.weights.h5' if is_formal_aflow else 'finetuned_gap_predictor.weights.h5'}",
         "finetune_report_dir": report_dir if is_formal_aflow else f"{report_dir}/finetune_supervised",
-        "validation_report": f"{report_dir}/latest_training_report_20260824.md" if is_formal_aflow else f"{report_dir}/finetune_supervised_report.md",
-        "ssl_checkpoint_dir": checkpoint_dir if is_formal_aflow else f"{checkpoint_dir}/ssl_mbm",
-        "finetune_checkpoint_dir": f"{checkpoint_dir}/ft" if is_formal_aflow else f"{checkpoint_dir}/finetune_supervised",
-        "ssl_log_dir": f"{log_dir}/tensorboard" if is_formal_aflow else f"{log_dir}/ssl_mbm",
-        "vision_synthetic_dir": f"data/processed/{source_dir}/vision_synthetic_train",
+        "validation_report": (
+            f"{report_dir}/latest_training_report.md"
+            if is_formal_aflow and explicit_experiment
+            else f"{report_dir}/latest_training_report_20260824.md"
+            if is_formal_aflow
+            else f"{report_dir}/finetune_supervised_report.md"
+        ),
+        "ssl_checkpoint_dir": (
+            f"{checkpoint_dir}/ssl"
+            if is_formal_aflow and explicit_experiment
+            else checkpoint_dir
+            if is_formal_aflow
+            else f"{checkpoint_dir}/ssl_mbm"
+        ),
+        "finetune_checkpoint_dir": (
+            f"{checkpoint_dir}/supervised"
+            if is_formal_aflow and explicit_experiment
+            else f"{checkpoint_dir}/ft"
+            if is_formal_aflow
+            else f"{checkpoint_dir}/finetune_supervised"
+        ),
+        "ssl_log_dir": (
+            f"{log_dir}/ssl"
+            if is_formal_aflow and explicit_experiment
+            else f"{log_dir}/tensorboard"
+            if is_formal_aflow
+            else f"{log_dir}/ssl_mbm"
+        ),
+        "vision_synthetic_dir": (
+            f"data/processed/{source_dir}/vision_synthetic_train/{experiment_id}"
+            if explicit_experiment
+            else f"data/processed/{source_dir}/vision_synthetic_train"
+        ),
         "vision_model_dir": f"{model_dir}/vision_detector",
         "vision_runs_dir": f"{log_dir}/vision_detector",
         "manifest": f"{model_dir}/physics_model_brain_manifest.json",
     }
 
 
-def required_artifacts(source: str = "mp") -> Dict[str, str]:
-    paths = pipeline_layout(source)
-    return {
+def required_artifacts(
+    source: str = "mp",
+    *,
+    experiment_id: str | None = None,
+    raw_h5: str | None = None,
+    ood_dir: str | None = None,
+) -> Dict[str, str]:
+    paths = pipeline_layout(
+        source,
+        experiment_id=experiment_id,
+        raw_h5=raw_h5,
+        ood_dir=ood_dir,
+    )
+    artifacts = {
         "raw_h5": paths["raw_h5"],
         "metadata": paths["metadata"],
         "ood_split": f'{paths["ood_dir"]}/band_tensors_ood_split.npz',
@@ -205,17 +401,106 @@ def required_artifacts(source: str = "mp") -> Dict[str, str]:
         "vision_detector": f'{paths["vision_model_dir"]}/band_plot_yolov8_pose_best.pt',
         "vision_detector_summary": f'{paths["vision_model_dir"]}/vision_detector_training_summary.json',
     }
+    if raw_h5 is not None:
+        artifacts["raw_snapshot_manifest"] = str(paths["raw_snapshot_manifest"])
+    if ood_dir is not None:
+        artifacts["tensor_snapshot_audit"] = str(paths["tensor_snapshot_audit"])
+    if experiment_id is not None:
+        artifacts.update(
+            {
+                "supervised_best": f'{paths["finetune_checkpoint_dir"]}/best.weights.h5',
+                "supervised_last": f'{paths["finetune_checkpoint_dir"]}/last.weights.h5',
+                "inner_selection_manifest": f'{paths["finetune_report_dir"]}/inner_selection_manifest.json',
+                "ssl_best_index": f'{paths["ssl_checkpoint_dir"]}/ckpt-best.index',
+                "ssl_best_data": f'{paths["ssl_checkpoint_dir"]}/ckpt-best.data-00000-of-00001',
+                "ssl_last_index": f'{paths["ssl_checkpoint_dir"]}/ckpt-last.index',
+                "ssl_last_data": f'{paths["ssl_checkpoint_dir"]}/ckpt-last.data-00000-of-00001',
+                "ssl_history": f'{paths["ssl_log_dir"]}/ssl_history.json',
+            }
+        )
+    return artifacts
 
 
-def artifact_status(source: str = "mp") -> Dict[str, Dict[str, object]]:
+def artifact_file_status(
+    full_path: Path,
+    *,
+    display_path: str | None = None,
+) -> Dict[str, object]:
+    is_file = full_path.is_file()
+    size = full_path.stat().st_size if is_file else None
+    return {
+        "path": display_path if display_path is not None else str(full_path),
+        "exists": bool(is_file and size is not None and size > 0),
+        "bytes": size,
+    }
+
+
+def validate_ssl_history_schema(
+    history: Dict[str, object],
+    *,
+    expected_consistency_weight: float,
+) -> Dict[str, int]:
+    """Validate the machine-readable SSL selection history before acceptance."""
+    if history.get("selection_monitor") != "val_total":
+        raise RuntimeError("SSL history selection monitor is not val_total")
+    epochs = history.get("epochs")
+    if not isinstance(epochs, list) or not epochs:
+        raise RuntimeError("SSL history has no completed epochs")
+    epoch_numbers = [int(item.get("epoch", -1)) for item in epochs]
+    if epoch_numbers != sorted(set(epoch_numbers)) or epoch_numbers[0] < 1:
+        raise RuntimeError("SSL history epoch sequence is invalid")
+    improved_epochs = []
+    for item in epochs:
+        val = item.get("val")
+        if not isinstance(val, dict):
+            raise RuntimeError("SSL history epoch is missing validation metrics")
+        mask_fraction = float(val.get("mask_fraction", -1.0))
+        if not 0.15 <= mask_fraction <= 0.30:
+            raise RuntimeError(
+                f"SSL validation mask fraction outside 15–30%: {mask_fraction}"
+            )
+        selection_weights = item.get("selection_weights")
+        post_weights = item.get("post_adaptation_weights")
+        if not isinstance(selection_weights, dict) or not isinstance(post_weights, dict):
+            raise RuntimeError("SSL history is missing pre/post adaptation weights")
+        if expected_consistency_weight == 0.0:
+            for label, weights in (
+                ("selection", selection_weights),
+                ("post-adaptation", post_weights),
+            ):
+                if abs(float(weights.get("symmetry", 1.0))) > 1e-12:
+                    raise RuntimeError(
+                        f"SSL {label} consistency weight was revived from zero"
+                    )
+        if item.get("improved") is True:
+            improved_epochs.append(int(item["epoch"]))
+    if not improved_epochs:
+        raise RuntimeError("SSL history has no best/improved epoch")
+    return {
+        "best_epoch": improved_epochs[-1],
+        "last_epoch": epoch_numbers[-1],
+    }
+
+
+def artifact_status(
+    source: str = "mp",
+    *,
+    experiment_id: str | None = None,
+    raw_h5: str | None = None,
+    ood_dir: str | None = None,
+) -> Dict[str, Dict[str, object]]:
     status: Dict[str, Dict[str, object]] = {}
-    for name, path in required_artifacts(source).items():
-        full = rel(path)
-        status[name] = {
-            "path": path,
-            "exists": full.exists(),
-            "bytes": full.stat().st_size if full.exists() and full.is_file() else None,
-        }
+    artifacts = required_artifacts(
+        source,
+        experiment_id=experiment_id,
+        raw_h5=raw_h5,
+        ood_dir=ood_dir,
+    )
+    for name, path in artifacts.items():
+        status[name] = artifact_file_status(
+            rel(path),
+            display_path=path,
+        )
     return status
 
 
@@ -224,8 +509,18 @@ def validate_pipeline_artifact_gate(
     status: Dict[str, Dict[str, object]],
     *,
     skip_vision: bool,
+    experiment_id: str | None = None,
+    raw_h5: str | None = None,
+    ood_dir: str | None = None,
 ) -> None:
-    required_names = list(required_artifacts(source))
+    required_names = list(
+        required_artifacts(
+            source,
+            experiment_id=experiment_id,
+            raw_h5=raw_h5,
+            ood_dir=ood_dir,
+        )
+    )
     if skip_vision:
         required_names = [
             name
@@ -244,8 +539,59 @@ def validate_pipeline_artifact_gate(
         )
 
 
+def read_checkpoint_epoch(prefix: Path) -> int:
+    """Read the completed epoch embedded in a TensorFlow checkpoint."""
+    import tensorflow as tf
+
+    reader = tf.train.load_checkpoint(str(prefix))
+    return int(reader.get_tensor("epoch/.ATTRIBUTES/VARIABLE_VALUE"))
+
+
+def validate_versioned_artifact_content(
+    args: argparse.Namespace,
+    paths: Dict[str, str],
+) -> Dict[str, object]:
+    """Validate selection hashes and SSL history/checkpoint consistency."""
+    from scripts import finetune_supervised
+
+    report_dir = rel(paths["finetune_report_dir"])
+    selection = finetune_supervised.validate_inner_selection_manifest(
+        str(report_dir)
+    )
+    history_path = rel(f'{paths["ssl_log_dir"]}/ssl_history.json')
+    with open(history_path, "r", encoding="utf-8") as handle:
+        history = json.load(handle)
+    history_info = validate_ssl_history_schema(
+        history,
+        expected_consistency_weight=float(args.consistency_weight),
+    )
+    best_epoch = read_checkpoint_epoch(
+        rel(f'{paths["ssl_checkpoint_dir"]}/ckpt-best')
+    )
+    last_epoch = read_checkpoint_epoch(
+        rel(f'{paths["ssl_checkpoint_dir"]}/ckpt-last')
+    )
+    if best_epoch != history_info["best_epoch"]:
+        raise RuntimeError(
+            f"SSL best checkpoint/history epoch mismatch: {best_epoch} != {history_info['best_epoch']}"
+        )
+    if last_epoch != history_info["last_epoch"]:
+        raise RuntimeError(
+            f"SSL last checkpoint/history epoch mismatch: {last_epoch} != {history_info['last_epoch']}"
+        )
+    return {
+        "inner_selection": selection,
+        "ssl_history": history_info,
+    }
+
+
 def write_model_brain_manifest(args: argparse.Namespace, status: Dict[str, Dict[str, object]]) -> Path:
-    paths = pipeline_layout(args.source)
+    paths = pipeline_layout(
+        args.source,
+        experiment_id=getattr(args, "experiment_id", None),
+        raw_h5=getattr(args, "raw_h5", None),
+        ood_dir=getattr(args, "ood_dir", None),
+    )
     metrics_path = rel(f'{paths["finetune_report_dir"]}/metrics_summary.json')
     metrics = None
     if metrics_path.exists():
@@ -320,10 +666,16 @@ def write_model_brain_manifest(args: argparse.Namespace, status: Dict[str, Dict[
     return output_path
 
 
-def clean_for_fresh_run(source: str, clean_raw: bool) -> None:
-    paths = pipeline_layout(source)
-    for path in [
-        rel(paths["ood_dir"]),
+def clean_for_fresh_run(
+    source: str,
+    clean_raw: bool,
+    *,
+    paths: Dict[str, str] | None = None,
+    preserve_ood_input: bool = False,
+    preserve_raw_input: bool = False,
+) -> None:
+    paths = paths or pipeline_layout(source)
+    cleanup_paths = [
         rel(paths["ssl_encoder"]),
         rel(paths["ssl_norm"]),
         rel(paths["finetuned_weights"]),
@@ -337,12 +689,15 @@ def clean_for_fresh_run(source: str, clean_raw: bool) -> None:
         rel(paths["validation_report"]),
         rel(paths["vision_synthetic_dir"]),
         rel(paths["vision_runs_dir"]),
-    ]:
+    ]
+    if not preserve_ood_input:
+        cleanup_paths.insert(0, rel(paths["ood_dir"]))
+    for path in cleanup_paths:
         remove_path(path)
     for final_epoch_model in rel(paths["model_dir"]).glob("ssl_mbm_final_epoch*.keras"):
         remove_path(final_epoch_model)
 
-    if clean_raw:
+    if clean_raw and not preserve_raw_input:
         for path in [
             rel(paths["raw_h5"]),
             rel(paths["metadata"]),
@@ -363,6 +718,26 @@ def clean_for_fresh_run(source: str, clean_raw: bool) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run full BandStructure AI training pipeline")
     parser.add_argument("--source", choices=("mp", "aflow"), default="mp")
+    parser.add_argument(
+        "--experiment-id",
+        default=None,
+        help="versioned experiment ID; required for new formal runs",
+    )
+    parser.add_argument(
+        "--raw-h5",
+        default=None,
+        help="explicit immutable raw HDF5 input path",
+    )
+    parser.add_argument(
+        "--ood-dir",
+        default=None,
+        help="explicit immutable processed tensor directory",
+    )
+    parser.add_argument(
+        "--report-date",
+        default=None,
+        help="report date token in YYYYMMDD form",
+    )
     parser.add_argument("--target", type=int, default=200, help="minimum total cached sample count")
     parser.add_argument("--target-k", type=int, default=128)
     parser.add_argument("--train-size", type=float, default=0.8)
@@ -376,14 +751,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ssl-batch-size", type=int, default=16)
     parser.add_argument("--mask-ratio", type=float, default=0.25)
     parser.add_argument("--sign-weight", type=float, default=2.0)
-    parser.add_argument("--consistency-weight", type=float, default=0.2)
+    parser.add_argument("--consistency-weight", type=float, default=0.0)
     parser.add_argument("--d-model", type=int, default=128)
     parser.add_argument("--num-heads", type=int, default=4)
     parser.add_argument("--num-layers", type=int, default=4)
     parser.add_argument("--dff", type=int, default=256)
     parser.add_argument("--projection-dim", type=int, default=64)
     parser.add_argument("--strain-scale", type=float, default=0.01)
-    parser.add_argument("--disable-strain-augmentation", action="store_true")
+    parser.add_argument(
+        "--disable-strain-augmentation",
+        dest="disable_strain_augmentation",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--enable-strain-augmentation",
+        dest="disable_strain_augmentation",
+        action="store_false",
+    )
+    parser.set_defaults(disable_strain_augmentation=True)
 
     parser.add_argument("--finetune-epochs", type=int, default=120)
     parser.add_argument("--finetune-batch-size", type=int, default=16)
@@ -417,21 +802,71 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def should_run_download(
+    *,
+    force_download: bool,
+    raw_count: int,
+    target: int,
+    explicit_raw_h5: bool,
+) -> bool:
+    """Protect caller-declared immutable raw snapshots from downloader writes."""
+    if explicit_raw_h5:
+        if force_download or raw_count < target:
+            raise RuntimeError(
+                "Explicit immutable raw snapshot cannot be downloaded into or extended"
+            )
+        return False
+    return bool(force_download or raw_count < target)
+
+
+def should_build_ood_tensors(
+    *,
+    fresh: bool,
+    ood_split_exists: bool,
+    explicit_ood_dir: bool,
+) -> bool:
+    """Never rebuild or create a caller-declared immutable OOD input."""
+    if explicit_ood_dir:
+        if not ood_split_exists:
+            raise FileNotFoundError(
+                "Explicit immutable OOD split is missing; refusing to rebuild it"
+            )
+        return False
+    return bool(fresh or not ood_split_exists)
+
+
 def main() -> None:
     args = parse_args()
 
     if not (0.15 <= args.mask_ratio <= 0.30):
         raise ValueError("--mask-ratio must stay between 0.15 and 0.30")
 
-    paths = pipeline_layout(args.source)
+    experiment_id = getattr(args, "experiment_id", None)
+    raw_h5_override = getattr(args, "raw_h5", None)
+    ood_dir_override = getattr(args, "ood_dir", None)
+    paths = pipeline_layout(
+        args.source,
+        experiment_id=experiment_id,
+        raw_h5=raw_h5_override,
+        ood_dir=ood_dir_override,
+    )
     if args.fresh:
-        clean_for_fresh_run(source=args.source, clean_raw=args.clean_raw)
+        clean_for_fresh_run(
+            source=args.source,
+            clean_raw=args.clean_raw,
+            paths=paths,
+            preserve_ood_input=ood_dir_override is not None,
+            preserve_raw_input=raw_h5_override is not None,
+        )
 
-    status = artifact_status(args.source)
+    status = artifact_status(
+        args.source,
+        experiment_id=experiment_id,
+        raw_h5=raw_h5_override,
+        ood_dir=ood_dir_override,
+    )
     if args.status_only:
         print(json.dumps(status, indent=2, ensure_ascii=False))
-        manifest_path = write_model_brain_manifest(args, status)
-        print(f"Model brain manifest: {manifest_path}")
         return
 
     raw_h5 = paths["raw_h5"]
@@ -439,7 +874,12 @@ def main() -> None:
     ood_split = f'{paths["ood_dir"]}/band_tensors_ood_split.npz'
     raw_count = count_h5_samples(rel(raw_h5))
     download_was_run = False
-    if args.force_download or raw_count < args.target:
+    if should_run_download(
+        force_download=args.force_download,
+        raw_count=raw_count,
+        target=args.target,
+        explicit_raw_h5=raw_h5_override is not None,
+    ):
         run_command(
             [
                 sys.executable,
@@ -470,7 +910,11 @@ def main() -> None:
         require_report=download_was_run,
     )
 
-    if args.fresh or not rel(ood_split).exists():
+    if should_build_ood_tensors(
+        fresh=args.fresh,
+        ood_split_exists=rel(ood_split).exists(),
+        explicit_ood_dir=ood_dir_override is not None,
+    ):
         run_command(
             [
                 sys.executable,
@@ -495,45 +939,10 @@ def main() -> None:
 
     ssl_ready = rel(paths["ssl_encoder"]).exists() and rel(paths["ssl_norm"]).exists()
     if args.force_ssl or args.fresh or not ssl_ready:
-        command = [
-            sys.executable,
-            "scripts/train_ssl.py",
-            "--tensor-npz",
-            ood_split,
-            "--epochs",
-            str(args.ssl_epochs),
-            "--batch-size",
-            str(args.ssl_batch_size),
-            "--mask-ratio",
-            str(args.mask_ratio),
-            "--sign-weight",
-            str(args.sign_weight),
-            "--consistency-weight",
-            str(args.consistency_weight),
-            "--d-model",
-            str(args.d_model),
-            "--num-heads",
-            str(args.num_heads),
-            "--num-layers",
-            str(args.num_layers),
-            "--dff",
-            str(args.dff),
-            "--projection-dim",
-            str(args.projection_dim),
-            "--strain-scale",
-            str(args.strain_scale),
-            "--checkpoint-dir",
-            paths["ssl_checkpoint_dir"],
-            "--log-dir",
-            paths["ssl_log_dir"],
-            "--model-dir",
-            paths["model_dir"],
-        ]
-        if args.require_gpu:
-            command.append("--require-gpu")
-        if args.disable_strain_augmentation:
-            command.append("--disable-strain-augmentation")
-        run_command(command, "SSL Masked Band Modeling pretraining")
+        run_command(
+            build_ssl_command(args, paths, ood_split),
+            "SSL Masked Band Modeling pretraining",
+        )
     else:
         print("[Skip] SSL pretraining: artifacts already exist")
 
@@ -542,10 +951,7 @@ def main() -> None:
         and rel(f'{paths["finetune_report_dir"]}/metrics_summary.json').exists()
     )
     if args.force_finetune or args.fresh or not finetune_ready:
-        run_command(
-            build_finetune_command(args, paths, ood_split),
-            "Supervised fine-tuning and validation",
-        )
+        run_supervised_stages(args, paths, ood_split)
     else:
         print("[Skip] fine-tuning: artifacts already exist")
 
@@ -594,13 +1000,23 @@ def main() -> None:
     else:
         print("[Skip] vision detector training: artifacts already exist")
 
-    status = artifact_status(args.source)
-    manifest_path = write_model_brain_manifest(args, status)
+    status = artifact_status(
+        args.source,
+        experiment_id=experiment_id,
+        raw_h5=raw_h5_override,
+        ood_dir=ood_dir_override,
+    )
     validate_pipeline_artifact_gate(
         args.source,
         status,
         skip_vision=args.skip_vision,
+        experiment_id=experiment_id,
+        raw_h5=raw_h5_override,
+        ood_dir=ood_dir_override,
     )
+    if experiment_id is not None:
+        validate_versioned_artifact_content(args, paths)
+    manifest_path = write_model_brain_manifest(args, status)
 
     print("\n" + "=" * 80)
     print("Pipeline complete")

@@ -119,6 +119,309 @@ class Stage0RobustnessTest(unittest.TestCase):
             "artifacts/reports/aflow_noleak_v4_seed42/metrics_summary.json",
         )
 
+    def test_full_pipeline_accepts_explicit_versioned_experiment_layout(self):
+        from scripts.run_full_pipeline import pipeline_layout, required_artifacts
+
+        experiment_id = "aflow_noleak_v6_30k_seed42_metricfix"
+        raw_h5 = "data/raw/aflow/snapshots/aflow_30000_20260825/aflow_bands.h5"
+        ood_dir = "data/processed/aflow/ood_tensors_v5_30000_seed42"
+        paths = pipeline_layout(
+            "aflow",
+            experiment_id=experiment_id,
+            raw_h5=raw_h5,
+            ood_dir=ood_dir,
+        )
+        artifacts = required_artifacts(
+            "aflow",
+            experiment_id=experiment_id,
+            raw_h5=raw_h5,
+            ood_dir=ood_dir,
+        )
+
+        self.assertEqual(paths["raw_h5"], raw_h5)
+        self.assertEqual(
+            paths["metadata"],
+            "data/raw/aflow/snapshots/aflow_30000_20260825/aflow_metadata.json",
+        )
+        self.assertEqual(paths["ood_dir"], ood_dir)
+        self.assertEqual(
+            paths["model_dir"],
+            f"artifacts/models/{experiment_id}",
+        )
+        self.assertIn(experiment_id, paths["vision_synthetic_dir"])
+        self.assertEqual(
+            artifacts["ood_split"],
+            f"{ood_dir}/band_tensors_ood_split.npz",
+        )
+        self.assertTrue(
+            artifacts["raw_snapshot_manifest"].endswith(
+                "aflow_30000_20260825/raw_snapshot_manifest.json"
+            )
+        )
+        self.assertEqual(
+            artifacts["tensor_snapshot_audit"],
+            f"{ood_dir}/tensor_snapshot_audit.json",
+        )
+        self.assertTrue(artifacts["supervised_best"].endswith("supervised/best.weights.h5"))
+        self.assertTrue(artifacts["supervised_last"].endswith("supervised/last.weights.h5"))
+        self.assertTrue(artifacts["inner_selection_manifest"].endswith("inner_selection_manifest.json"))
+        self.assertTrue(artifacts["ssl_best_index"].endswith("ssl/ckpt-best.index"))
+        self.assertTrue(artifacts["ssl_last_index"].endswith("ssl/ckpt-last.index"))
+        self.assertTrue(artifacts["ssl_history"].endswith("ssl/ssl_history.json"))
+        status = {
+            name: {"path": path, "exists": True, "bytes": 1}
+            for name, path in artifacts.items()
+        }
+        status["supervised_last"]["exists"] = False
+        with self.assertRaisesRegex(RuntimeError, "supervised_last"):
+            from scripts.run_full_pipeline import validate_pipeline_artifact_gate
+
+            validate_pipeline_artifact_gate(
+                "aflow",
+                status,
+                skip_vision=True,
+                experiment_id=experiment_id,
+                raw_h5=raw_h5,
+                ood_dir=ood_dir,
+            )
+        self.assertNotIn("aflow_noleak_v4_seed42", json.dumps(paths))
+        for unsafe_experiment in (".", "..", ".hidden", "../escape"):
+            with self.assertRaisesRegex(ValueError, "Unsafe experiment"):
+                pipeline_layout("aflow", experiment_id=unsafe_experiment)
+        with self.assertRaisesRegex(ValueError, "Unsupported source"):
+            pipeline_layout("untrusted-provider", experiment_id=experiment_id)
+        with self.assertRaisesRegex(ValueError, "raw HDF5"):
+            pipeline_layout(
+                "aflow",
+                experiment_id=experiment_id,
+                raw_h5=f"artifacts/models/{experiment_id}/input.h5",
+            )
+        with self.assertRaisesRegex(ValueError, "OOD directory"):
+            pipeline_layout(
+                "aflow",
+                experiment_id=experiment_id,
+                ood_dir=f"artifacts/reports/{experiment_id}",
+            )
+
+    def test_fresh_cleanup_preserves_explicit_immutable_ood_input(self):
+        from scripts import run_full_pipeline
+
+        paths = run_full_pipeline.pipeline_layout(
+            "aflow",
+            experiment_id="aflow_noleak_v6_30k_seed42_metricfix",
+            raw_h5="data/raw/aflow/snapshots/aflow_30000_20260825/aflow_bands.h5",
+            ood_dir="data/processed/aflow/ood_tensors_v5_30000_seed42",
+        )
+        removed = []
+        with patch.object(
+            run_full_pipeline,
+            "remove_path",
+            side_effect=lambda path: removed.append(path.as_posix()),
+        ):
+            run_full_pipeline.clean_for_fresh_run(
+                "aflow",
+                clean_raw=True,
+                paths=paths,
+                preserve_ood_input=True,
+                preserve_raw_input=True,
+            )
+
+        self.assertNotIn(paths["ood_dir"], removed)
+        self.assertNotIn(paths["raw_h5"], removed)
+
+    def test_explicit_immutable_ood_input_is_never_rebuilt(self):
+        from scripts.run_full_pipeline import should_build_ood_tensors
+
+        self.assertFalse(
+            should_build_ood_tensors(
+                fresh=True,
+                ood_split_exists=True,
+                explicit_ood_dir=True,
+            )
+        )
+        with self.assertRaisesRegex(FileNotFoundError, "immutable OOD"):
+            should_build_ood_tensors(
+                fresh=False,
+                ood_split_exists=False,
+                explicit_ood_dir=True,
+            )
+
+    def test_explicit_raw_snapshot_never_runs_downloader(self):
+        from scripts.run_full_pipeline import should_run_download
+
+        self.assertFalse(
+            should_run_download(
+                force_download=False,
+                raw_count=30_000,
+                target=30_000,
+                explicit_raw_h5=True,
+            )
+        )
+        with self.assertRaisesRegex(RuntimeError, "immutable raw"):
+            should_run_download(
+                force_download=True,
+                raw_count=30_000,
+                target=30_000,
+                explicit_raw_h5=True,
+            )
+        with self.assertRaisesRegex(RuntimeError, "immutable raw"):
+            should_run_download(
+                force_download=False,
+                raw_count=29_999,
+                target=30_000,
+                explicit_raw_h5=True,
+            )
+
+    def test_full_pipeline_cli_accepts_versioned_layout_arguments(self):
+        from scripts import run_full_pipeline
+
+        argv = [
+            "run_full_pipeline.py",
+            "--source",
+            "aflow",
+            "--experiment-id",
+            "aflow_noleak_v6_30k_seed42_metricfix",
+            "--raw-h5",
+            "data/raw/snapshot.h5",
+            "--ood-dir",
+            "data/processed/snapshot",
+            "--report-date",
+            "20260827",
+        ]
+        with patch.object(sys, "argv", argv):
+            args = run_full_pipeline.parse_args()
+
+        self.assertEqual(
+            args.experiment_id,
+            "aflow_noleak_v6_30k_seed42_metricfix",
+        )
+        self.assertEqual(args.raw_h5, "data/raw/snapshot.h5")
+        self.assertEqual(args.ood_dir, "data/processed/snapshot")
+        self.assertEqual(args.report_date, "20260827")
+
+    def test_artifact_status_requires_nonempty_regular_file(self):
+        from scripts.run_full_pipeline import artifact_file_status
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            empty = root / "empty.bin"
+            directory = root / "directory"
+            filled = root / "filled.bin"
+            empty.write_bytes(b"")
+            directory.mkdir()
+            filled.write_bytes(b"ok")
+
+            self.assertFalse(artifact_file_status(empty)["exists"])
+            self.assertFalse(artifact_file_status(directory)["exists"])
+            self.assertTrue(artifact_file_status(filled)["exists"])
+            self.assertEqual(artifact_file_status(filled)["bytes"], 2)
+
+    def test_ssl_history_schema_rejects_bad_mask_and_accepts_disabled_consistency(self):
+        from scripts.run_full_pipeline import validate_ssl_history_schema
+
+        history = {
+            "selection_monitor": "val_total",
+            "epochs": [
+                {
+                    "epoch": 1,
+                    "val": {"total": 1.0, "mask_fraction": 0.14},
+                    "selection_weights": {"curvature": 0.5, "symmetry": 0.0},
+                    "post_adaptation_weights": {"curvature": 0.5, "symmetry": 0.0},
+                    "improved": True,
+                }
+            ],
+        }
+        with self.assertRaisesRegex(RuntimeError, "mask fraction"):
+            validate_ssl_history_schema(history, expected_consistency_weight=0.0)
+
+        history["epochs"][0]["val"]["mask_fraction"] = 0.25
+        result = validate_ssl_history_schema(
+            history,
+            expected_consistency_weight=0.0,
+        )
+        self.assertEqual(result["last_epoch"], 1)
+        self.assertEqual(result["best_epoch"], 1)
+
+    def test_versioned_artifact_content_gate_validates_selection_and_ssl_epochs(self):
+        from types import SimpleNamespace
+        from scripts import finetune_supervised, run_full_pipeline
+
+        history = {
+            "selection_monitor": "val_total",
+            "epochs": [
+                {
+                    "epoch": 1,
+                    "val": {"total": 1.0, "mask_fraction": 0.25},
+                    "selection_weights": {"curvature": 0.5, "symmetry": 0.0},
+                    "post_adaptation_weights": {"curvature": 0.5, "symmetry": 0.0},
+                    "improved": True,
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "logs/ssl").mkdir(parents=True)
+            (root / "logs/ssl/ssl_history.json").write_text(
+                json.dumps(history),
+                encoding="utf-8",
+            )
+            paths = {
+                "finetune_report_dir": "reports",
+                "ssl_log_dir": "logs/ssl",
+                "ssl_checkpoint_dir": "checkpoints/ssl",
+            }
+            args = SimpleNamespace(consistency_weight=0.0)
+            with patch.object(
+                run_full_pipeline,
+                "rel",
+                side_effect=lambda path: root / path,
+            ), patch.object(
+                finetune_supervised,
+                "validate_inner_selection_manifest",
+                return_value={"monitor": "val_loss"},
+            ) as selection_gate, patch.object(
+                run_full_pipeline,
+                "read_checkpoint_epoch",
+                side_effect=[1, 1],
+            ):
+                result = run_full_pipeline.validate_versioned_artifact_content(
+                    args,
+                    paths,
+                )
+
+        selection_gate.assert_called_once_with(str(root / "reports"))
+        self.assertEqual(result["ssl_history"]["best_epoch"], 1)
+        self.assertEqual(result["ssl_history"]["last_epoch"], 1)
+
+    def test_full_pipeline_status_only_does_not_write_manifest(self):
+        from types import SimpleNamespace
+        from scripts import run_full_pipeline
+
+        args = SimpleNamespace(
+            mask_ratio=0.25,
+            source="aflow",
+            experiment_id=None,
+            raw_h5=None,
+            ood_dir=None,
+            fresh=False,
+            clean_raw=False,
+            status_only=True,
+        )
+        with patch.object(
+            run_full_pipeline,
+            "parse_args",
+            return_value=args,
+        ), patch.object(
+            run_full_pipeline,
+            "artifact_status",
+            return_value={},
+        ), patch.object(
+            run_full_pipeline,
+            "write_model_brain_manifest",
+            side_effect=AssertionError("status-only must not write"),
+        ):
+            run_full_pipeline.main()
+
     def test_full_pipeline_blocks_tensor_stage_on_false_download_report(self):
         from types import SimpleNamespace
         from scripts import run_full_pipeline
@@ -267,12 +570,14 @@ class Stage0RobustnessTest(unittest.TestCase):
             run_full_pipeline,
             "write_model_brain_manifest",
             return_value=Path(tmp) / "manifest.json",
-        ):
+        ) as write_manifest:
             with self.assertRaisesRegex(
                 RuntimeError,
                 "Pipeline artifact gate failed.*ood_split",
             ):
                 run_full_pipeline.main()
+
+        write_manifest.assert_not_called()
 
     def test_full_pipeline_propagates_gpu_requirement_to_finetune(self):
         from types import SimpleNamespace
@@ -290,6 +595,9 @@ class Stage0RobustnessTest(unittest.TestCase):
             extremum_weight=1.0,
             random_state=42,
             require_gpu=True,
+            experiment_id="aflow_noleak_v6_30k_seed42_metricfix",
+            source="aflow",
+            report_date="20260827",
         )
         paths = {
             "ssl_encoder": "encoder.keras",
@@ -302,6 +610,119 @@ class Stage0RobustnessTest(unittest.TestCase):
             args, paths, "split.npz"
         )
         self.assertIn("--require-gpu", command)
+        for flag, expected in (
+            ("--experiment-id", args.experiment_id),
+            ("--source", args.source),
+            ("--report-date", args.report_date),
+        ):
+            index = command.index(flag)
+            self.assertEqual(command[index + 1], expected)
+
+        train_command = run_full_pipeline.build_finetune_command(
+            args,
+            paths,
+            "split.npz",
+            mode="train",
+        )
+        evaluation_command = run_full_pipeline.build_finetune_command(
+            args,
+            paths,
+            "split.npz",
+            mode="evaluate",
+        )
+        self.assertIn("--train-only", train_command)
+        self.assertNotIn("--evaluation-only", train_command)
+        self.assertIn("--evaluation-only", evaluation_command)
+        self.assertNotIn("--train-only", evaluation_command)
+
+    def test_full_pipeline_runs_train_only_before_outer_evaluation(self):
+        from types import SimpleNamespace
+        from scripts import run_full_pipeline
+
+        args = SimpleNamespace(
+            finetune_epochs=2,
+            finetune_batch_size=4,
+            learning_rate=1e-3,
+            encoder_learning_rate=1e-5,
+            type_weight=2.0,
+            freeze_layers=2,
+            topology_weight=0.3,
+            entropy_weight=0.02,
+            extremum_weight=1.0,
+            random_state=42,
+            require_gpu=True,
+            experiment_id="aflow_noleak_v6_30k_seed42_metricfix",
+            source="aflow",
+            report_date="20260827",
+        )
+        paths = {
+            "ssl_encoder": "encoder.keras",
+            "ssl_norm": "norm.json",
+            "finetune_report_dir": "reports",
+            "finetune_checkpoint_dir": "checkpoints",
+            "finetuned_weights": "model.weights.h5",
+        }
+        calls = []
+
+        with patch.object(
+            run_full_pipeline,
+            "run_command",
+            side_effect=lambda command, stage: calls.append((command, stage)),
+        ):
+            run_full_pipeline.run_supervised_stages(
+                args,
+                paths,
+                "split.npz",
+            )
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("--train-only", calls[0][0])
+        self.assertNotIn("--evaluation-only", calls[0][0])
+        self.assertIn("--evaluation-only", calls[1][0])
+        self.assertNotIn("--train-only", calls[1][0])
+
+    def test_full_pipeline_ssl_command_records_safe_physics_defaults(self):
+        from types import SimpleNamespace
+        from scripts import run_full_pipeline
+
+        args = SimpleNamespace(
+            ssl_epochs=60,
+            ssl_batch_size=32,
+            mask_ratio=0.25,
+            sign_weight=2.0,
+            consistency_weight=0.0,
+            d_model=128,
+            num_heads=4,
+            num_layers=4,
+            dff=256,
+            projection_dim=64,
+            strain_scale=0.01,
+            random_state=42,
+            require_gpu=True,
+            disable_strain_augmentation=True,
+        )
+        paths = {
+            "ssl_checkpoint_dir": "checkpoints/ssl",
+            "ssl_log_dir": "logs/ssl",
+            "model_dir": "models/v6",
+        }
+        command = run_full_pipeline.build_ssl_command(args, paths, "split.npz")
+
+        consistency_index = command.index("--consistency-weight")
+        self.assertEqual(command[consistency_index + 1], "0.0")
+        seed_index = command.index("--random-state")
+        self.assertEqual(command[seed_index + 1], "42")
+        self.assertIn("--disable-strain-augmentation", command)
+        self.assertIn("--require-gpu", command)
+
+    def test_full_pipeline_defaults_disable_invalid_ssl_auxiliaries(self):
+        from scripts import run_full_pipeline
+
+        with patch.object(sys, "argv", ["run_full_pipeline.py"]):
+            args = run_full_pipeline.parse_args()
+
+        self.assertEqual(args.consistency_weight, 0.0)
+        self.assertTrue(args.disable_strain_augmentation)
 
     def test_aflow_30000_uses_a_60000_candidate_metadata_pool(self):
         from src.data.batch_download import metadata_candidate_limit
@@ -361,6 +782,52 @@ class Stage0RobustnessTest(unittest.TestCase):
             self.assertEqual(history.history["loss"], [1.0, 0.8])
             self.assertEqual(history.history["val_gap_mae"], [0.2, 0.1])
 
+    def test_evaluation_restore_is_bound_to_manifest_best_path(self):
+        from scripts.finetune_supervised import restore_model_for_evaluation
+
+        class RecordingModel:
+            def __init__(self):
+                self.loaded = None
+
+            def load_weights(self, path):
+                self.loaded = path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            frozen_best = root / "frozen" / "best.weights.h5"
+            alternate_best = root / "alternate" / "best.weights.h5"
+            frozen_best.parent.mkdir()
+            alternate_best.parent.mkdir()
+            frozen_best.write_bytes(b"frozen")
+            alternate_best.write_bytes(b"alternate")
+            history_csv = root / "training_log.csv"
+            history_csv.write_text(
+                "epoch,loss,val_loss\n0,1.0,1.0\n",
+                encoding="utf-8",
+            )
+            manifest = {
+                "states": {
+                    "best": {"path": str(frozen_best)},
+                }
+            }
+            model = RecordingModel()
+
+            with self.assertRaisesRegex(RuntimeError, "frozen best"):
+                restore_model_for_evaluation(
+                    model,
+                    str(alternate_best),
+                    str(history_csv),
+                    selection_manifest=manifest,
+                )
+
+        self.assertIsNone(model.loaded)
+
+    def test_evaluation_only_does_not_compile_a_fresh_optimizer(self):
+        from scripts.finetune_supervised import should_compile_supervised_model
+
+        self.assertFalse(should_compile_supervised_model(evaluation_only=True))
+        self.assertTrue(should_compile_supervised_model(evaluation_only=False))
+
     def test_evaluation_only_skips_fit(self):
         from scripts.finetune_supervised import fit_or_restore_history
 
@@ -398,6 +865,30 @@ class Stage0RobustnessTest(unittest.TestCase):
             self.assertEqual(model.loaded, str(checkpoint))
             self.assertEqual(history.history["loss"], [1.0])
 
+    def test_finetune_dataset_fit_explicitly_disables_keras_shuffle(self):
+        from scripts.finetune_supervised import fit_or_restore_history
+
+        class RecordingModel:
+            def fit(self, *args, **kwargs):
+                self.args = args
+                self.kwargs = kwargs
+                return "history"
+
+        model = RecordingModel()
+        result = fit_or_restore_history(
+            model=model,
+            evaluation_only=False,
+            checkpoint_path="unused",
+            history_csv_path="unused",
+            train_ds=object(),
+            val_ds=object(),
+            epochs=2,
+            callbacks=[],
+        )
+
+        self.assertEqual(result, "history")
+        self.assertFalse(model.kwargs["shuffle"])
+
     def test_finetune_cli_exposes_evaluation_only(self):
         import subprocess
         import sys
@@ -410,6 +901,564 @@ class Stage0RobustnessTest(unittest.TestCase):
             check=True,
         )
         self.assertIn("--evaluation-only", result.stdout)
+        self.assertIn("--train-only", result.stdout)
+        self.assertIn("--experiment-id", result.stdout)
+        self.assertIn("--source", result.stdout)
+
+    def test_supervised_whole_path_augmentation_is_disabled_by_default(self):
+        from scripts.finetune_supervised import (
+            DEFAULT_SUPERVISED_AUGMENTATION,
+            SUPERVISED_EXECUTION_MODE_REQUIRED,
+        )
+
+        self.assertFalse(DEFAULT_SUPERVISED_AUGMENTATION)
+        self.assertTrue(SUPERVISED_EXECUTION_MODE_REQUIRED)
+
+    def test_supervised_metrics_aggregate_across_unequal_validation_batches(self):
+        import tensorflow as tf
+
+        from scripts.finetune_supervised import (
+            SupervisedBandGapModel,
+            compile_model,
+        )
+
+        class IdentitySequence(tf.keras.layers.Layer):
+            def call(self, x, training=False):
+                del training
+                return x
+
+        class TinySSLEncoder(tf.keras.Model):
+            def __init__(self):
+                super().__init__()
+                self.encoder = IdentitySequence()
+                self.pooling = tf.keras.layers.GlobalAveragePooling1D()
+
+        tf.keras.utils.set_random_seed(123)
+        model = SupervisedBandGapModel(
+            TinySSLEncoder(),
+            feature_mean=np.zeros(6, dtype=np.float32),
+            feature_std=np.ones(6, dtype=np.float32),
+            d_model=8,
+            dropout=0.0,
+        )
+        x = np.zeros((4, 8, 6), dtype=np.float32)
+        labels = {
+            "gap": np.asarray([[0.0], [0.0], [0.0], [8.0]], dtype=np.float32),
+            "type": tf.one_hot([0, 0, 0, 0], depth=3).numpy().astype(np.float32),
+        }
+        model._forward(tf.constant(x), training=False)
+        compile_model(
+            model,
+            learning_rate=0.0,
+            type_weight=1.0,
+            class_weights={0: 1.0, 1: 1.0, 2: 1.0},
+            encoder_learning_rate=0.0,
+            topology_weight=0.0,
+            entropy_weight=0.0,
+            extremum_weight=0.0,
+        )
+
+        full_batch = model.test_step((tf.constant(x), labels))
+        expected = float(full_batch["gap_mae"].numpy())
+        model.reset_metrics()
+        split_batches = tf.data.Dataset.from_tensor_slices((x, labels)).batch(3)
+        measured = float(
+            model.evaluate(split_batches, verbose=0, return_dict=True)["gap_mae"]
+        )
+
+        self.assertAlmostEqual(expected, 2.0, places=6)
+        self.assertAlmostEqual(measured, expected, places=6)
+
+    def test_supervised_callbacks_use_aggregate_val_loss_and_keep_best_last(self):
+        from types import SimpleNamespace
+
+        import tensorflow as tf
+
+        from scripts.finetune_supervised import build_supervised_callbacks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            args = SimpleNamespace(
+                learning_rate=1e-3,
+                warmup_epochs=3,
+                epochs=20,
+                min_lr=1e-7,
+                checkpoint_dir=str(Path(tmp) / "checkpoints"),
+                output_dir=str(Path(tmp) / "reports"),
+            )
+            callbacks = build_supervised_callbacks(args)
+
+        checkpoints = [
+            callback
+            for callback in callbacks
+            if isinstance(callback, tf.keras.callbacks.ModelCheckpoint)
+        ]
+        early_stopping = next(
+            callback
+            for callback in callbacks
+            if isinstance(callback, tf.keras.callbacks.EarlyStopping)
+        )
+        best = next(callback for callback in checkpoints if callback.save_best_only)
+        last = next(callback for callback in checkpoints if not callback.save_best_only)
+
+        self.assertEqual(best.monitor, "val_loss")
+        self.assertEqual(early_stopping.monitor, "val_loss")
+        self.assertFalse(early_stopping.restore_best_weights)
+        self.assertTrue(str(best.filepath).endswith("best.weights.h5"))
+        self.assertTrue(str(last.filepath).endswith("last.weights.h5"))
+        self.assertNotEqual(str(best.filepath), str(last.filepath))
+
+    def test_freeze_supervised_states_preserves_best_last_and_accepted(self):
+        from types import SimpleNamespace
+
+        from scripts.finetune_supervised import freeze_supervised_states
+
+        class RecordingModel:
+            def __init__(self):
+                self.loaded = None
+
+            def load_weights(self, path):
+                self.loaded = str(path)
+
+            def save_weights(self, path):
+                Path(path).write_bytes(b"accepted-restored-best")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            checkpoint_dir = root / "checkpoints"
+            output_dir = root / "reports"
+            checkpoint_dir.mkdir()
+            output_dir.mkdir()
+            best = checkpoint_dir / "best.weights.h5"
+            last = checkpoint_dir / "last.weights.h5"
+            accepted = root / "models" / "accepted.weights.h5"
+            accepted.parent.mkdir()
+            best.write_bytes(b"best-state")
+            last.write_bytes(b"last-state")
+            history = SimpleNamespace(
+                epoch=[0, 1],
+                history={"val_loss": [2.0, 1.0]},
+            )
+            model = RecordingModel()
+
+            manifest = freeze_supervised_states(
+                model=model,
+                checkpoint_dir=str(checkpoint_dir),
+                accepted_model_path=str(accepted),
+                output_dir=str(output_dir),
+                history=history,
+            )
+
+            persisted = json.loads(
+                (output_dir / "inner_selection_manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            accepted_exists = accepted.exists()
+
+        self.assertEqual(model.loaded, str(best))
+        self.assertTrue(accepted_exists)
+        self.assertEqual(manifest, persisted)
+        self.assertEqual(manifest["monitor"], "val_loss")
+        self.assertEqual(manifest["best_epoch_one_based"], 2)
+        self.assertNotEqual(
+            manifest["states"]["best"]["sha256"],
+            manifest["states"]["last"]["sha256"],
+        )
+        self.assertEqual(
+            manifest["states"]["accepted"]["source"],
+            "restored_best",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            checkpoint_dir = root / "checkpoints"
+            output_dir = root / "reports"
+            checkpoint_dir.mkdir()
+            output_dir.mkdir()
+            (checkpoint_dir / "best.weights.h5").write_bytes(b"best")
+            last = checkpoint_dir / "last.weights.h5"
+            last.write_bytes(b"last")
+            with self.assertRaisesRegex(ValueError, "distinct"):
+                freeze_supervised_states(
+                    model=RecordingModel(),
+                    checkpoint_dir=str(checkpoint_dir),
+                    accepted_model_path=str(last),
+                    output_dir=str(output_dir),
+                    history=SimpleNamespace(
+                        epoch=[0],
+                        history={"val_loss": [1.0]},
+                    ),
+                )
+
+    def test_frozen_selection_manifest_rejects_tampered_checkpoint(self):
+        from types import SimpleNamespace
+
+        from scripts.finetune_supervised import (
+            freeze_supervised_states,
+            validate_inner_selection_manifest,
+        )
+
+        class FileModel:
+            def load_weights(self, path):
+                self.loaded = path
+
+            def save_weights(self, path):
+                Path(path).write_bytes(b"accepted")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            checkpoint_dir = root / "checkpoints"
+            output_dir = root / "reports"
+            checkpoint_dir.mkdir()
+            output_dir.mkdir()
+            (checkpoint_dir / "best.weights.h5").write_bytes(b"best")
+            (checkpoint_dir / "last.weights.h5").write_bytes(b"last")
+            accepted = root / "accepted.weights.h5"
+            freeze_supervised_states(
+                model=FileModel(),
+                checkpoint_dir=str(checkpoint_dir),
+                accepted_model_path=str(accepted),
+                output_dir=str(output_dir),
+                history=SimpleNamespace(epoch=[0], history={"val_loss": [1.0]}),
+            )
+            validate_inner_selection_manifest(str(output_dir))
+            (checkpoint_dir / "best.weights.h5").write_bytes(b"tampered")
+
+            with self.assertRaisesRegex(RuntimeError, "hash mismatch"):
+                validate_inner_selection_manifest(str(output_dir))
+
+    def test_evaluation_config_write_does_not_rewrite_accepted_weights(self):
+        from scripts.finetune_supervised import save_supervised_model_artifacts
+
+        class NoWeightSaveModel:
+            def save_weights(self, path):
+                raise AssertionError("evaluation must not rewrite accepted weights")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            weights = Path(tmp) / "accepted.weights.h5"
+            weights.write_bytes(b"frozen-accepted")
+            before = weights.read_bytes()
+
+            outputs = save_supervised_model_artifacts(
+                NoWeightSaveModel(),
+                str(weights),
+                {"experiment_id": "v6-test"},
+                save_weights=False,
+            )
+
+            after = weights.read_bytes()
+            config = json.loads(Path(outputs["config"]).read_text(encoding="utf-8"))
+
+        self.assertEqual(before, after)
+        self.assertEqual(config["experiment_id"], "v6-test")
+
+    def test_markdown_report_uses_runtime_provenance_and_honest_gap_semantics(self):
+        from scripts.finetune_supervised import save_markdown_report
+
+        metrics = {
+            "line_mode_gap_mae": 0.1,
+            "line_mode_gap_rmse": 0.2,
+            "dft_gap_residual_mae": 0.6,
+            "model_vs_global_dft_mae": 0.61,
+            "r2": 0.9,
+            "type_acc": 0.8,
+            "macro_f1": 0.7,
+            "direct_gap_recall": 0.6,
+        }
+        summary = {
+            "experiment_id": "aflow_noleak_v6_30k_seed42_metricfix",
+            "report_date": "20260827",
+            "source": "aflow",
+            "tensor_npz": "data/processed/aflow/ood_tensors_v5_30000_seed42/band_tensors_ood_split.npz",
+            "train_metrics": metrics,
+            "ood_test_metrics": metrics,
+            "class_weights": {0: 1.0, 1: 1.0, 2: 1.0},
+            "physics_violation_rates": {
+                "negative_predicted_gap_rate": 0.0,
+                "vbm_positive_curvature_rate": 0.1,
+                "cbm_negative_curvature_rate": 0.1,
+                "gap_identity_large_residual_rate": 0.0,
+                "physics_score": 0.9,
+                "gap_identity_mae": 0.1,
+            },
+            "roc_auc": {"direct": 0.8, "indirect": 0.7},
+            "gap_semantics": {
+                "analytic_identity_baseline_mae_ev": 0.0,
+                "analytic_identity_baseline_rmse_ev": 0.0,
+                "interpretation": "learned soft-extremum approximation, not independent DFT prediction",
+            },
+            "mc_uncertainty": {
+                "raw_95_interval_coverage": 0.90,
+                "tolerance_augmented_coverage": 1.0,
+                "tolerance_ev": 0.5,
+            },
+            "classification_scope": {
+                "spacegroup_macro_accuracy": 0.75,
+                "feature_label_match_count": 80,
+                "feature_label_mismatch_count": 20,
+                "feature_label_match_accuracy": 0.95,
+                "feature_label_mismatch_accuracy": 0.40,
+            },
+            "outputs": {
+                "metrics": "artifacts/reports/aflow_noleak_v6_30k_seed42_metricfix/metrics_summary.json",
+                "predictions": "artifacts/reports/aflow_noleak_v6_30k_seed42_metricfix/ood_test_predictions.json",
+                "model": "artifacts/models/aflow_noleak_v6_30k_seed42_metricfix/finetuned.weights.h5",
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "report.md"
+            save_markdown_report(summary, str(report))
+            text = report.read_text(encoding="utf-8")
+
+        self.assertIn(summary["experiment_id"], text)
+        self.assertIn("20260827", text)
+        self.assertIn(summary["tensor_npz"], text)
+        self.assertIn("Analytic identity baseline MAE: 0.000000 eV", text)
+        self.assertIn("Raw 95% interval coverage: 90.00%", text)
+        self.assertIn("Tolerance-augmented coverage: 100.00%", text)
+        self.assertIn("Spacegroup-macro accuracy: 75.00%", text)
+        self.assertIn("Feature/label mismatch accuracy: 40.00%", text)
+        self.assertNotIn("2026-06-04", text)
+        self.assertNotIn("artifacts/reports/mp", text)
+
+    def test_report_bundle_writes_dated_and_latest_alias(self):
+        from scripts.finetune_supervised import save_report_bundle
+
+        metrics = {
+            "line_mode_gap_mae": 0.1,
+            "line_mode_gap_rmse": 0.2,
+            "dft_gap_residual_mae": 0.6,
+            "model_vs_global_dft_mae": 0.61,
+            "r2": 0.9,
+            "type_acc": 0.8,
+            "macro_f1": 0.7,
+            "direct_gap_recall": 0.6,
+        }
+        summary = {
+            "experiment_id": "v6",
+            "report_date": "20260827",
+            "source": "aflow",
+            "tensor_npz": "split.npz",
+            "train_metrics": metrics,
+            "ood_test_metrics": metrics,
+            "class_weights": {},
+            "physics_violation_rates": {
+                "negative_predicted_gap_rate": 0.0,
+                "vbm_positive_curvature_rate": 0.0,
+                "cbm_negative_curvature_rate": 0.0,
+                "gap_identity_large_residual_rate": 0.0,
+                "physics_score": 1.0,
+                "gap_identity_mae": 0.0,
+            },
+            "roc_auc": {},
+            "outputs": {},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = save_report_bundle(summary, tmp, "20260827")
+            dated = Path(paths["dated"])
+            latest = Path(paths["latest"])
+            same_bytes = dated.read_bytes() == latest.read_bytes()
+
+        self.assertTrue(same_bytes)
+        self.assertTrue(str(dated).endswith("finetune_supervised_report_20260827.md"))
+        self.assertTrue(str(latest).endswith("latest_training_report.md"))
+
+    def test_parity_plot_labels_line_mode_function_not_dft_prediction(self):
+        from scripts import finetune_supervised
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            finetune_supervised.plt,
+            "xlabel",
+        ) as xlabel, patch.object(
+            finetune_supervised.plt,
+            "ylabel",
+        ) as ylabel:
+            finetune_supervised.save_parity_plot(
+                np.asarray([0.0, 1.0], dtype=np.float32),
+                np.asarray([0.1, 0.9], dtype=np.float32),
+                str(Path(tmp) / "parity.png"),
+                "test",
+            )
+
+        xlabel.assert_called_with("Analytic line-mode tensor gap (eV)")
+        ylabel.assert_called_with("Learned soft-extremum gap (eV)")
+
+    def test_error_histogram_labels_line_mode_residual_not_dft(self):
+        from scripts import finetune_supervised
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            finetune_supervised.plt,
+            "xlabel",
+        ) as xlabel:
+            finetune_supervised.save_error_histogram(
+                np.asarray([0.0, 1.0], dtype=np.float32),
+                np.asarray([0.1, 0.9], dtype=np.float32),
+                str(Path(tmp) / "errors.png"),
+                "test",
+            )
+
+        xlabel.assert_called_with(
+            "Residual: learned soft-extremum - analytic line-mode gap (eV)"
+        )
+
+    def test_mc_calibration_separates_raw_and_tolerance_coverage(self):
+        from src.utils.mc_dropout import mc_calibration_check
+
+        y_true = np.asarray([0.0, 10.0], dtype=np.float32)
+        mc_result = {
+            "gap_samples": np.zeros((2, 2), dtype=np.float32),
+            "gap_mean": np.asarray([0.0, 0.0], dtype=np.float32),
+            "gap_std": np.asarray([0.1, 0.1], dtype=np.float32),
+            "gap_ci95_low": np.asarray([-0.2, -0.2], dtype=np.float32),
+            "gap_ci95_high": np.asarray([0.2, 0.2], dtype=np.float32),
+        }
+
+        calibration = mc_calibration_check(
+            y_true,
+            mc_result,
+            tolerance_ev=10.0,
+        )
+
+        self.assertEqual(calibration["raw_95_interval_coverage"], 0.5)
+        self.assertEqual(calibration["tolerance_augmented_coverage"], 1.0)
+        self.assertEqual(calibration["tolerance_ev"], 10.0)
+
+    def test_mc_dropout_type_prediction_uses_bounded_batches(self):
+        from src.utils.mc_dropout import mc_dropout_predict_with_type
+
+        class RecordingModel:
+            def __init__(self):
+                self.batch_sizes = []
+
+            def __call__(self, batch, training=False):
+                self.batch_sizes.append(len(batch))
+                n = len(batch)
+                return {
+                    "gap": np.zeros((n, 1), dtype=np.float32),
+                    "type": np.tile(
+                        np.asarray([[1.0, 0.0, 0.0]], dtype=np.float32),
+                        (n, 1),
+                    ),
+                }
+
+        model = RecordingModel()
+        result = mc_dropout_predict_with_type(
+            model,
+            np.zeros((7, 4, 6), dtype=np.float32),
+            n_samples=2,
+            batch_size=3,
+            seed=42,
+        )
+
+        self.assertEqual(model.batch_sizes, [3, 3, 1, 3, 3, 1])
+        self.assertEqual(result["gap_samples"].shape, (2, 7))
+
+    def test_classification_scope_metrics_include_group_macro_and_mismatch_strata(self):
+        from scripts.finetune_supervised import classification_scope_metrics
+
+        type_true = np.asarray([0, 0, 1, 1], dtype=np.int32)
+        type_pred = np.asarray(
+            [
+                [0.9, 0.1, 0.0],
+                [0.1, 0.9, 0.0],
+                [0.1, 0.9, 0.0],
+                [0.9, 0.1, 0.0],
+            ],
+            dtype=np.float32,
+        )
+        groups = np.asarray([1, 1, 2, 2], dtype=np.int32)
+        material_ids = np.asarray(["a", "b", "c", "d"])
+        metrics = classification_scope_metrics(
+            type_true,
+            type_pred,
+            groups,
+            material_ids,
+            mismatch_material_ids={"b", "d"},
+        )
+
+        self.assertEqual(metrics["sample_accuracy"], 0.5)
+        self.assertEqual(metrics["spacegroup_macro_accuracy"], 0.5)
+        self.assertEqual(metrics["feature_label_match_count"], 2)
+        self.assertEqual(metrics["feature_label_mismatch_count"], 2)
+        self.assertEqual(metrics["feature_label_match_accuracy"], 1.0)
+        self.assertEqual(metrics["feature_label_mismatch_accuracy"], 0.0)
+
+    def test_load_mismatch_ids_uses_split_manifest_audit(self):
+        from scripts.finetune_supervised import load_mismatch_material_ids
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            npz_path = root / "band_tensors_ood_split.npz"
+            npz_path.write_bytes(b"placeholder")
+            (root / "ood_split_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "metal_feature_audit": {
+                            "mismatch_material_ids": ["a", "c", "a"]
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            ids = load_mismatch_material_ids(str(npz_path))
+
+        self.assertEqual(ids, {"a", "c"})
+
+    def test_finetune_loader_preserves_segment_ids(self):
+        from scripts.finetune_supervised import load_dataset
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            split_path = root / "split.npz"
+            norm_path = root / "norm.json"
+            x_train = np.zeros((2, 2, 4, 3), dtype=np.float32)
+            x_test = np.zeros((1, 2, 4, 3), dtype=np.float32)
+            train_segments = np.asarray(
+                [[0, 0, 1, 1], [2, 2, 3, 3]],
+                dtype=np.int32,
+            )
+            test_segments = np.asarray([[4, 4, 5, 5]], dtype=np.int32)
+            np.savez(
+                split_path,
+                X_train=x_train,
+                X_test=x_test,
+                y_train=np.zeros(2, dtype=np.float32),
+                y_test=np.zeros(1, dtype=np.float32),
+                y_type_train=np.zeros(2, dtype=np.int32),
+                y_type_test=np.zeros(1, dtype=np.int32),
+                groups_train=np.asarray([1, 2], dtype=np.int32),
+                groups_test=np.asarray([3], dtype=np.int32),
+                material_ids_train=np.asarray(["a", "b"]),
+                material_ids_test=np.asarray(["c"]),
+                segment_ids_train=train_segments,
+                segment_ids_test=test_segments,
+            )
+            norm_path.write_text(
+                json.dumps({"mean": [0.0] * 6, "std": [1.0] * 6}),
+                encoding="utf-8",
+            )
+
+            loaded = load_dataset(str(split_path), str(norm_path))
+            train_only = load_dataset(
+                str(split_path),
+                str(norm_path),
+                include_outer_test=False,
+            )
+
+        np.testing.assert_array_equal(loaded["segment_ids_train"], train_segments)
+        np.testing.assert_array_equal(loaded["segment_ids_test"], test_segments)
+        for outer_key in (
+            "X_test_raw",
+            "X_test",
+            "y_test",
+            "type_test",
+            "tensor_gap_test",
+            "groups_test",
+            "segment_ids_test",
+            "material_ids_test",
+        ):
+            self.assertNotIn(outer_key, train_only)
 
     def test_downloader_default_cache_is_source_classified(self):
         previous = os.getcwd()
@@ -1884,6 +2933,21 @@ class Stage0RobustnessTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "No TensorFlow GPU"):
                 finetune_supervised.configure_tensorflow_runtime(require_gpu=True)
 
+    def test_required_gpu_tensor_gate_rejects_cpu_fallback(self):
+        from types import SimpleNamespace
+        from src.utils import assert_tensor_on_gpu
+
+        cpu_tensor = SimpleNamespace(device="/job:localhost/device:CPU:0")
+        gpu_tensor = SimpleNamespace(device="/job:localhost/device:GPU:0")
+
+        with self.assertRaisesRegex(RuntimeError, "CPU fallback"):
+            assert_tensor_on_gpu(cpu_tensor, "probe", require_gpu=True)
+        self.assertIn(
+            "/DEVICE:GPU:",
+            assert_tensor_on_gpu(gpu_tensor, "probe", require_gpu=True).upper(),
+        )
+        assert_tensor_on_gpu(cpu_tensor, "portable smoke", require_gpu=False)
+
     def test_finetune_cleanup_does_not_delete_a_sibling_experiment_report(self):
         from scripts.finetune_supervised import clean_finetune_artifacts
 
@@ -1905,6 +2969,36 @@ class Stage0RobustnessTest(unittest.TestCase):
 
         path = supervised_report_path("artifacts/reports/exp", "20260825")
         self.assertEqual(path, os.path.join("artifacts", "reports", "exp", "finetune_supervised_report_20260825.md"))
+        for unsafe in ("../escape", "2026-08-27", "", "123456789"):
+            with self.assertRaisesRegex(ValueError, "YYYYMMDD"):
+                supervised_report_path("artifacts/reports/exp", unsafe)
+
+    def test_finetune_freezes_ssl_only_mask_token(self):
+        try:
+            import tensorflow as tf
+            from src.engine.finetune_trainer import freeze_encoder_layers
+            from src.models import SSLEncoder
+        except ImportError:
+            self.skipTest("TensorFlow is not installed in the lightweight host environment")
+
+        encoder = SSLEncoder(
+            num_features=6,
+            seq_len=8,
+            d_model=8,
+            num_heads=2,
+            num_layers=1,
+            dff=16,
+            projection_dim=4,
+        )
+        sample = tf.zeros((1, 8, 6), dtype=tf.float32)
+        encoder(sample, training=False)
+        encoder.reconstruct(sample, training=False)
+        mask_token_id = id(encoder.mask_token)
+
+        info = freeze_encoder_layers(encoder, freeze_layers=0)
+
+        self.assertNotIn(mask_token_id, {id(var) for var in encoder.trainable_variables})
+        self.assertIn("mask_token", info["frozen_heads"])
 
     def test_supervised_compile_explicitly_disables_xla_jit(self):
         from scripts.finetune_supervised import compile_model
@@ -2018,6 +3112,215 @@ class Stage0RobustnessTest(unittest.TestCase):
         shifted_curv = loss.second_derivative(shifted, segment_ids=segments)
         np.testing.assert_allclose(base_curv.numpy(), shifted_curv.numpy(), atol=1e-6)
 
+    def test_posthoc_local_curvature_respects_segments(self):
+        from src.utils.physics_validator import local_curvature
+
+        segments = np.asarray([0, 0, 0, 1, 1, 1], dtype=np.int32)
+        base = np.asarray([0.0, 1.0, 4.0, 0.0, 1.0, 4.0], dtype=np.float32)
+        shifted = np.asarray(
+            [0.0, 1.0, 4.0, 100.0, 101.0, 104.0],
+            dtype=np.float32,
+        )
+
+        np.testing.assert_allclose(
+            local_curvature(base, segment_ids=segments),
+            local_curvature(shifted, segment_ids=segments),
+            atol=1e-6,
+        )
+
+    def test_physics_validator_consumes_segment_ids(self):
+        from src.utils.physics_validator import PhysicsValidator
+
+        segment_ids = np.asarray([[0, 0, 0, 1, 1, 1]], dtype=np.int32)
+        base = np.zeros((1, 2, 6, 3), dtype=np.float32)
+        shifted = np.zeros_like(base)
+        base[0, 0, :, 0] = [0.0, 1.0, 4.0, -4.0, -3.0, 0.0]
+        base[0, 1, :, 0] = [4.0, 1.0, 0.0, 8.0, 5.0, 4.0]
+        shifted[:] = base
+        shifted[0, 0, 3:, 0] -= 100.0
+        shifted[0, 1, 3:, 0] += 100.0
+        predicted_gap = np.asarray([-4.0], dtype=np.float32)
+        validator = PhysicsValidator()
+
+        base_stats = validator.validate(
+            predicted_gap,
+            base,
+            segment_ids=segment_ids,
+        )
+        shifted_stats = validator.validate(
+            predicted_gap,
+            shifted,
+            segment_ids=segment_ids,
+        )
+
+        self.assertEqual(
+            base_stats["vbm_positive_curvature_rate"],
+            shifted_stats["vbm_positive_curvature_rate"],
+        )
+        self.assertEqual(
+            base_stats["cbm_negative_curvature_rate"],
+            shifted_stats["cbm_negative_curvature_rate"],
+        )
+
+    def test_finetune_physics_stats_consume_segment_ids(self):
+        from scripts.finetune_supervised import physics_violation_stats
+
+        segment_ids = np.asarray([[0, 0, 0, 1, 1, 1]], dtype=np.int32)
+        base = np.zeros((1, 2, 6, 3), dtype=np.float32)
+        shifted = np.zeros_like(base)
+        base[0, 0, :, 0] = [0.0, 1.0, 4.0, -4.0, -3.0, 0.0]
+        base[0, 1, :, 0] = [4.0, 1.0, 0.0, 8.0, 5.0, 4.0]
+        shifted[:] = base
+        shifted[0, 0, 3:, 0] -= 100.0
+        shifted[0, 1, 3:, 0] += 100.0
+        predicted_gap = np.asarray([-4.0], dtype=np.float32)
+
+        base_stats = physics_violation_stats(
+            predicted_gap,
+            base,
+            segment_ids=segment_ids,
+        )
+        shifted_stats = physics_violation_stats(
+            predicted_gap,
+            shifted,
+            segment_ids=segment_ids,
+        )
+
+        self.assertEqual(
+            base_stats["vbm_positive_curvature_rate"],
+            shifted_stats["vbm_positive_curvature_rate"],
+        )
+        self.assertEqual(
+            base_stats["cbm_negative_curvature_rate"],
+            shifted_stats["cbm_negative_curvature_rate"],
+        )
+
+    def test_curvature_zoom_examples_pass_segment_ids_to_curvature_helper(self):
+        from scripts import finetune_supervised
+
+        tensors = np.zeros((1, 2, 6, 3), dtype=np.float32)
+        tensors[0, 0, :, 0] = [0.0, 1.0, 4.0, 0.0, 1.0, 4.0]
+        tensors[0, 1, :, 0] = [4.0, 1.0, 0.0, 4.0, 1.0, 0.0]
+        segments = np.asarray([[0, 0, 0, 1, 1, 1]], dtype=np.int32)
+        seen = []
+
+        def fake_curvature(band, segment_ids=None):
+            seen.append(np.asarray(segment_ids).copy())
+            return np.zeros_like(band, dtype=np.float32)
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            finetune_supervised,
+            "_local_curvature",
+            side_effect=fake_curvature,
+        ):
+            finetune_supervised.save_curvature_zoom_examples(
+                tensors,
+                tensors,
+                np.asarray(["sample"]),
+                str(Path(tmp) / "curvature.png"),
+                segment_ids=segments,
+                max_examples=1,
+            )
+
+        self.assertEqual(len(seen), 4)
+        for observed in seen:
+            np.testing.assert_array_equal(observed, segments[0])
+
+    def test_zero_ssl_consistency_weight_stays_disabled_after_adaptation(self):
+        try:
+            import tensorflow as tf
+            from src.engine.ssl_trainer import MBMTrainer
+            from src.models import SSLEncoder
+        except ImportError:
+            self.skipTest("TensorFlow is not installed in the lightweight host environment")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            model = SSLEncoder(
+                num_features=6,
+                seq_len=4,
+                d_model=8,
+                num_heads=2,
+                num_layers=1,
+                dff=16,
+                projection_dim=4,
+            )
+            model(tf.zeros((1, 4, 6)), training=False)
+            trainer = MBMTrainer(
+                model=model,
+                learning_rate=1e-3,
+                mask_ratio=0.25,
+                sign_weight=0.1,
+                consistency_weight=0.0,
+                checkpoint_dir=tmp,
+                log_dir=tmp,
+            )
+            trainer._adapt_physics_weights(
+                {
+                    "curvature_loss": 0.0,
+                    "symmetry_loss": 0.0,
+                    "mse_loss": 1.0,
+                }
+            )
+
+        self.assertEqual(float(trainer.symmetry_weight.numpy()), 0.0)
+
+    def test_ssl_best_checkpoint_records_the_improved_epoch(self):
+        try:
+            import tensorflow as tf
+            from src.engine.ssl_trainer import MBMTrainer
+            from src.models import SSLEncoder
+        except ImportError:
+            self.skipTest("TensorFlow is not installed in the lightweight host environment")
+
+        class ConstantMetricTrainer(MBMTrainer):
+            def _run_epoch(self, dataset, training):
+                del dataset, training
+                return {
+                    "total": 1.0,
+                    "mse_loss": 1.0,
+                    "masked_mae": 1.0,
+                    "mask_fraction": 0.25,
+                    "curvature_loss": 0.0,
+                    "symmetry_loss": 0.0,
+                }
+
+            def _adapt_physics_weights(self, val_metrics):
+                del val_metrics
+
+        with tempfile.TemporaryDirectory() as tmp:
+            model = SSLEncoder(
+                num_features=6,
+                seq_len=4,
+                d_model=8,
+                num_heads=2,
+                num_layers=1,
+                dff=16,
+                projection_dim=4,
+            )
+            model(tf.zeros((1, 4, 6)), training=False)
+            trainer = ConstantMetricTrainer(
+                model=model,
+                learning_rate=1e-3,
+                mask_ratio=0.25,
+                sign_weight=0.1,
+                consistency_weight=0.0,
+                checkpoint_dir=tmp,
+                log_dir=tmp,
+                early_stopping_patience=0,
+            )
+            dataset = tf.data.Dataset.from_tensors(
+                (
+                    tf.zeros((1, 4, 6)),
+                    tf.zeros((1,), tf.int32),
+                    tf.zeros((1, 4), tf.int32),
+                )
+            )
+            trainer.train(dataset, dataset, epochs=1)
+            reader = tf.train.load_checkpoint(str(Path(tmp) / "ckpt-best"))
+            saved_epoch = int(reader.get_tensor("epoch/.ATTRIBUTES/VARIABLE_VALUE"))
+
+        self.assertEqual(saved_epoch, 1)
+
     def test_ssl_trainer_early_stops_after_patience(self):
         try:
             import tensorflow as tf
@@ -2033,7 +3336,9 @@ class Stage0RobustnessTest(unittest.TestCase):
                     "mask_fraction": 0.25, "curvature_loss": 0.0, "symmetry_loss": 0.0,
                 }
             def _adapt_physics_weights(self, val_metrics):
-                return None
+                del val_metrics
+                self.curvature_weight.assign(9.0)
+                self.symmetry_weight.assign(8.0)
             def save_checkpoint(self, name):
                 return None
 
@@ -2055,6 +3360,21 @@ class Stage0RobustnessTest(unittest.TestCase):
             )
             trainer.train(dataset, dataset, epochs=10)
             self.assertEqual(int(trainer.epoch_var.numpy()), 3)
+            history = json.loads(
+                (Path(tmp) / "ssl_history.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(len(history["epochs"]), 3)
+            self.assertEqual(history["epochs"][-1]["epoch"], 3)
+            self.assertEqual(history["selection_monitor"], "val_total")
+            self.assertAlmostEqual(
+                history["epochs"][0]["selection_weights"]["curvature"],
+                0.1,
+                places=6,
+            )
+            self.assertEqual(
+                history["epochs"][0]["post_adaptation_weights"]["curvature"],
+                9.0,
+            )
 
     def test_warmup_cosine_learning_rate_boundaries(self):
         try:
@@ -2066,6 +3386,95 @@ class Stage0RobustnessTest(unittest.TestCase):
         self.assertAlmostEqual(float(schedule(0, 10, 2, 1e-3, 1e-5)), 0.0, places=10)
         self.assertAlmostEqual(float(schedule(2, 10, 2, 1e-3, 1e-5)), 1e-3, places=10)
         self.assertAlmostEqual(float(schedule(9, 10, 2, 1e-3, 1e-5)), 1e-5, places=10)
+
+    def test_ssl_epoch_metrics_weight_unequal_batches(self):
+        try:
+            import tensorflow as tf
+            from src.engine.ssl_trainer import MBMTrainer
+        except ImportError:
+            self.skipTest("TensorFlow is not installed in the lightweight host environment")
+
+        class SyntheticMetricTrainer(MBMTrainer):
+            def _val_step(self, batch, segment_ids):
+                del segment_ids
+                sample_count = tf.cast(tf.shape(batch)[0], tf.float32)
+                value = tf.where(sample_count > 1.0, 1.0, 9.0)
+                return {
+                    "total": value,
+                    "mse_loss": value,
+                    "masked_mae": value,
+                    "mask_fraction": tf.where(sample_count > 1.0, 0.20, 0.30),
+                    "curvature_loss": value,
+                    "symmetry_loss": value,
+                    "sample_count": sample_count,
+                    "masked_elements": sample_count * 10.0,
+                    "position_count": sample_count * 50.0,
+                }
+
+        trainer = object.__new__(SyntheticMetricTrainer)
+        x = tf.zeros((4, 8, 6), dtype=tf.float32)
+        groups = tf.range(4, dtype=tf.int32)
+        segments = tf.zeros((4, 8), dtype=tf.int32)
+        dataset = tf.data.Dataset.from_tensor_slices((x, groups, segments)).batch(3)
+        metrics = trainer._run_epoch(dataset, training=False)
+
+        self.assertAlmostEqual(metrics["mse_loss"], 3.0, places=6)
+        self.assertAlmostEqual(metrics["masked_mae"], 3.0, places=6)
+        self.assertAlmostEqual(metrics["mask_fraction"], 0.225, places=6)
+
+    def test_ssl_validation_uses_fixed_corruption(self):
+        try:
+            import tensorflow as tf
+            from src.engine.ssl_trainer import MBMTrainer
+            from src.models import SSLEncoder
+        except ImportError:
+            self.skipTest("TensorFlow is not installed in the lightweight host environment")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tf.keras.utils.set_random_seed(321)
+            model = SSLEncoder(
+                num_features=6,
+                seq_len=16,
+                d_model=8,
+                num_heads=2,
+                num_layers=1,
+                dff=16,
+                projection_dim=4,
+                dropout_rate=0.0,
+            )
+            model(tf.zeros((1, 16, 6)), training=False)
+            model.reconstruct(tf.zeros((1, 16, 6)), training=False)
+            trainer = MBMTrainer(
+                model=model,
+                learning_rate=1e-3,
+                mask_ratio=0.25,
+                sign_weight=0.0,
+                consistency_weight=0.0,
+                checkpoint_dir=tmp,
+                log_dir=tmp,
+                min_span=3,
+                max_span=5,
+            )
+            x = tf.random.stateless_normal((4, 16, 6), seed=[7, 13])
+            groups = tf.range(4, dtype=tf.int32)
+            segment_row = tf.constant([0] * 8 + [1] * 8, dtype=tf.int32)
+            segments = tf.tile(segment_row[None, :], [4, 1])
+            dataset = tf.data.Dataset.from_tensor_slices((x, groups, segments)).batch(2)
+
+            first = trainer._run_epoch(dataset, training=False)
+            second = trainer._run_epoch(dataset, training=False)
+
+        for key in first:
+            self.assertAlmostEqual(first[key], second[key], places=7, msg=key)
+
+    def test_ssl_cli_defaults_disable_invalid_consistency_and_path_warp(self):
+        from scripts import train_ssl
+
+        with patch.object(sys, "argv", ["train_ssl.py"]):
+            args = train_ssl.parse_args()
+
+        self.assertEqual(args.consistency_weight, 0.0)
+        self.assertTrue(args.disable_strain_augmentation)
 
     def test_ssl_loader_keeps_segment_ids_aligned_with_groups(self):
         from scripts.train_ssl import load_ood_tensor_data
@@ -2106,6 +3515,39 @@ class Stage0RobustnessTest(unittest.TestCase):
         expected = np.zeros((1, 16, 1), dtype=np.float32)
         expected[0, 6:8, 0] = 1.0
         np.testing.assert_array_equal(mask.numpy(), expected)
+
+    def test_random_span_mask_is_seeded_and_respects_actual_ratio_contract(self):
+        try:
+            import tensorflow as tf
+            from src.engine.ssl_trainer import random_span_mask
+        except ImportError:
+            self.skipTest("TensorFlow is not installed in the lightweight host environment")
+
+        batch_size = 16
+        seq_len = 128
+        segments = tf.constant(
+            np.tile(
+                np.repeat(np.arange(4, dtype=np.int32), 32)[None, :],
+                (batch_size, 1),
+            )
+        )
+        kwargs = dict(
+            batch_size=tf.constant(batch_size),
+            seq_len=tf.constant(seq_len),
+            mask_ratio=0.25,
+            min_span=5,
+            max_span=15,
+            segment_ids=segments,
+            seed=tf.constant([17, 29], dtype=tf.int32),
+        )
+        first = random_span_mask(**kwargs).numpy()
+        second = random_span_mask(**kwargs).numpy()
+        fractions = first.mean(axis=(1, 2))
+
+        np.testing.assert_array_equal(first, second)
+        self.assertTrue(np.all(fractions >= 0.15), fractions)
+        self.assertTrue(np.all(fractions <= 0.30), fractions)
+        self.assertGreaterEqual(float(fractions.mean()), 0.20)
 
     def test_ssl_encoder_uses_learnable_mask_token(self):
         try:

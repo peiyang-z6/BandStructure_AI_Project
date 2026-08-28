@@ -1,0 +1,332 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-28T17:32:05.281801+08:00",
+  "experiment_id": "aflow_noleak_v5_30k_seed42",
+  "status": "immutable historical run; checkpoint selection invalidated by full-epoch metric audit",
+  "directories": {
+    "models": 5,
+    "checkpoints": 15,
+    "reports": 29,
+    "logs": 12
+  },
+  "file_count": 61,
+  "total_bytes": 290169865,
+  "files": [
+    {
+      "path": "artifacts/models/aflow_noleak_v5_30k_seed42/finetuned.weights.h5",
+      "bytes": 2837784,
+      "sha256": "91f42fc3bb67ab676ad369c01822b8f6b58bc2676dd968406e38fa3359b1a5be"
+    },
+    {
+      "path": "artifacts/models/aflow_noleak_v5_30k_seed42/finetuned_config.json",
+      "bytes": 1146,
+      "sha256": "48276b1909a13a16efbf1c5d095fb5e80ee4edd3cd1227d6097371a5ca83aff3"
+    },
+    {
+      "path": "artifacts/models/aflow_noleak_v5_30k_seed42/ssl_mbm_final_epoch54.keras",
+      "bytes": 2604406,
+      "sha256": "801f65c7daae3acb3516ccbf590878dc5fdc5d5724fc2f09abc87a6637ab27e9"
+    },
+    {
+      "path": "artifacts/models/aflow_noleak_v5_30k_seed42/ssl_mbm_norm_stats.json",
+      "bytes": 318,
+      "sha256": "fe1cacf03aaca82a97cccbc092576d299a4d3369c06d07b806425d12512d6f58"
+    },
+    {
+      "path": "artifacts/models/aflow_noleak_v5_30k_seed42/ssl_mbm_pretrained.keras",
+      "bytes": 2604406,
+      "sha256": "8a57975a5461f8ebc5a18d424ce91ed752a4f6bfa36e7cc8cdb30edf7b9cc6c1"
+    },
+    {
+      "path": "artifacts/checkpoints/aflow_noleak_v5_30k_seed42/ssl/ckpt-10.data-00000-of-00001",
+      "bytes": 6979442,
+      "sha256": "600f9469240f6bb3ff9124053034199afdde64990fabcede7b66110dee7b6246"
+    },
+    {
+      "path": "artifacts/checkpoints/aflow_noleak_v5_30k_seed42/ssl/ckpt-10.index",
+      "bytes": 13677,
+      "sha256": "da814384b3ac965ad098750695bf3a6489fad9826da306d23ad1e4480dd6abcb"
+    },
+    {
+      "path": "artifacts/checkpoints/aflow_noleak_v5_30k_seed42/ssl/ckpt-20.data-00000-of-00001",
+      "bytes": 6979442,
+      "sha256": "4f614f6a33607908552b329255f077aee25fda50c9ceb83ce4bce69576679648"
+    },
+    {
+      "path": "artifacts/checkpoints/aflow_noleak_v5_30k_seed42/ssl/ckpt-20.index",
+      "bytes": 13677,
+      "sha256": "b506257bf867c85a888c36f08a114692bbbd47ec490f07518b57805665b38c9d"
+    },
+    {
+      "path": "artifacts/checkpoints/aflow_noleak_v5_30k_seed42/ssl/ckpt-30.data-00000-of-00001",
+      "bytes": 6979442,
+      "sha256": "ba46581fd98a5d2f1673628e4a7a4003b0af6781b6f732c75ae306950134f245"
+    },
+    {
+      "path": "artifacts/checkpoints/aflow_noleak_v5_30k_seed42/ssl/ckpt-30.index",
+      "bytes": 13677,
+      "sha256": "3434c3d1c4a9e321abcbd7e7416f924afc8e251c101e6905b12d5766a0de14f1"
+    },
+    {
+      "path": "artifacts/checkpoints/aflow_noleak_v5_30k_seed42/ssl/ckpt-40.data-00000-of-00001",
+      "bytes": 6979442,
+      "sha256": "824048afc29c603be2153012b76ef80fb2d86af137e5716d12e0ffb2a2c6736f"
+    },
+    {
+      "path": "artifacts/checkpoints/aflow_noleak_v5_30k_seed42/ssl/ckpt-40.index",
+      "bytes": 13677,
+      "sha256": "7e58a8a02d75b866b33d6571fa4354c7422192209f8749be4cb0bfeaacecee7b"
+    },
+    {
+      "path": "artifacts/checkpoints/aflow_noleak_v5_30k_seed42/ssl/ckpt-50.data-00000-of-00001",
+      "bytes": 6979442,
+      "sha256": "add3bb39aeca644e99766f8f73f92ba0de0d88594842d2be55e15b770151f15d"
+    },
+    {
+      "path": "artifacts/checkpoints/aflow_noleak_v5_30k_seed42/ssl/ckpt-50.index",
+      "bytes": 13677,
+      "sha256": "643d7cd99efc54a421ac2e2e24e4593c359e1484b7223511c611019106c83553"
+    },
+    {
+      "path": "artifacts/checkpoints/aflow_noleak_v5_30k_seed42/ssl/ckpt-best.data-00000-of-00001",
+      "bytes": 6979442,
+      "sha256": "94e0d27b93a88cadacedfb18fd4da4aaa6821b1ccca5a126e82b476e0beebb59"
+    },
+    {
+      "path": "artifacts/checkpoints/aflow_noleak_v5_30k_seed42/ssl/ckpt-best.index",
+      "bytes": 13677,
+      "sha256": "5f4e6f9aa54a28fe6ec8917bab9992cea4d6537041adadc963e3aad0b45e5c77"
+    },
+    {
+      "path": "artifacts/checkpoints/aflow_noleak_v5_30k_seed42/ssl/ckpt-last.data-00000-of-00001",
+      "bytes": 6979442,
+      "sha256": "4a53ca008cf5c1b0e8d45783bc90385296abecfefca907992dc8aab09c066f82"
+    },
+    {
+      "path": "artifacts/checkpoints/aflow_noleak_v5_30k_seed42/ssl/ckpt-last.index",
+      "bytes": 13677,
+      "sha256": "29786fb06c445e843d0e3061c7e9190b9babab587e692420478e75530a00884f"
+    },
+    {
+      "path": "artifacts/checkpoints/aflow_noleak_v5_30k_seed42/supervised/best.weights.h5",
+      "bytes": 5410120,
+      "sha256": "3f55d2756a320c5a172da61155981747d18195dfa45e98423e5589964ef0e7f6"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/archives/band30k_results_20260825.tar.zst",
+      "bytes": 214984160,
+      "sha256": "704468f9ff22bc8d43c92bd6d0b5511f1a6cf827e746cc9220a4da77df83030f"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/archives/band30k_results_20260825.tar.zst.json",
+      "bytes": 333,
+      "sha256": "c77f106a83f0b5e1436142f5896fe57807a6dda7447020aebb2cc067dd2dcaee"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/artifact_sha256.json",
+      "bytes": 10893,
+      "sha256": "abe782fbac4a8a9520853239197083de92f8ad8ca6b4db40cf824efb61d6ac69"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/band_overlay_examples_ood_test.png",
+      "bytes": 917631,
+      "sha256": "bdfbfc8853d567f7bc4b025c1b311c2f5164719c78113cf291b558bbb66067d1"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/confusion_matrix_ood_test.png",
+      "bytes": 118088,
+      "sha256": "e62a457df7eb181b6c85349ec6684185ed831892598d167109c8218d163ee581"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/curvature_zoom_examples_ood_test.png",
+      "bytes": 404273,
+      "sha256": "f0c40002ba7603c2bc28015e34b69ddbe0b38a60efcbd5911e122d72e2358702"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/error_distribution_ood_test.png",
+      "bytes": 59081,
+      "sha256": "c2e208783c86734d1206f58dc3e7fba78e3028a3fa1221f7edf9e19b132c8bdf"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/extremum_probability_heatmaps_ood_test.png",
+      "bytes": 225105,
+      "sha256": "fa498a324a573efbe8c717268da8b4a4c40452a34244c84b60a93d7da391bfda"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/finetune_strategy_summary.json",
+      "bytes": 1823,
+      "sha256": "21c157c8f05fbc989e21ba3a4a348b6b116a4c8362bdc689d41811fd35aae608"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/finetune_supervised_report_20260825.md",
+      "bytes": 2118,
+      "sha256": "23edbdba9f37c95fe5a75f400801b6e5fd68be8907634ce129dba045a1abd2f0"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/formal_run_summary.json",
+      "bytes": 1248,
+      "sha256": "f0fe56f0d3be1d23c35ef9614b905b8582c0b6a6a4823a61d291fa3c1d588daa"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/formal_training_status.json",
+      "bytes": 2377,
+      "sha256": "9f674702b23ff9af7821a3969468665d6376619d4702d82fc909587a74a330ff"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/gpu_environment_lock.json",
+      "bytes": 599,
+      "sha256": "4a70c718a2bcd40d654dd3fdcc1c2078c9a0ca1e7696b8aa18f239506b17059f"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/gpu_preflight.json",
+      "bytes": 967,
+      "sha256": "4ba1fb93df2ebd14f61f533b7cddfc9995b7c2cb4c8a3ac4813e920fbbee88f5"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/latent_tsne_spacegroups.png",
+      "bytes": 928177,
+      "sha256": "0d5d4d7b26770c94e901c88d48c9e9c3b01ec064b97ad4dd988777662bd68d55"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/latest_training_report_20260825.md",
+      "bytes": 6950,
+      "sha256": "56fb8c6605665ba926d9167b0efcb5f06d02d63dbdd1f82146a426aeb1471cd5"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/learning_rate_curve.png",
+      "bytes": 67792,
+      "sha256": "43e0464637b056a8fad7846cb09cde270015565f538fb3d7a556f25c00b69378"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/mc_uncertainty_predictions.json",
+      "bytes": 2031469,
+      "sha256": "a4184cf5c8a0a664252bd29cddc60ff759c7c1c7f2efcde4ef22ce1a95e18cd2"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/metrics_summary.json",
+      "bytes": 7648,
+      "sha256": "39c08e3133e62411ae67f8e1fb68cbf68b95d99448cd2324eaf7ce990b193535"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/ood_test_predictions.json",
+      "bytes": 3030193,
+      "sha256": "4d1aa9cc7e0fa5ef97ea7a08e8b7fe1f5c19529c69871737c07047e4bcce54e7"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/parity_plot_ood_test.png",
+      "bytes": 162515,
+      "sha256": "9017a47b5f4d41c9fde6e035e55d780b99de1312a6412e24cdd847a88531fb10"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/parity_plot_train.png",
+      "bytes": 165133,
+      "sha256": "6ab1a6d3292a51df838ece36be5ab5623d68fb94481e5ae83016906c1a9fa6b8"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/physics_violation_rates_ood_test.png",
+      "bytes": 79333,
+      "sha256": "f5041459579ecfa2fbc74632c4dafad18908aab11158dc4a31f8d39991bc4588"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/postprocess_resume_audit.json",
+      "bytes": 534,
+      "sha256": "02423e5033a86daf88594613f23cc9685527fb44a2265fb2d1d4d76a82035715"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/return_archive_manifest.json",
+      "bytes": 13371,
+      "sha256": "1b0a7ba29940fab0a00e86e17c45d561bccba2a86ae4ead34e4f206b5f066e09"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/roc_curves_ood_test.png",
+      "bytes": 96290,
+      "sha256": "e427e755a420b65a71dec93a084d636fed128170e1a6f72671c9b8d5709e1f01"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/server_return_import_audit.json",
+      "bytes": 593,
+      "sha256": "1aa59c6c1ea7341890a7c7de97abab7d371b36d44d635e3408f5d639cb58e2d0"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/training_curves.png",
+      "bytes": 333344,
+      "sha256": "7b3a703edeae8e7605d1582a602a2cd8e81597cfb87802afe6b5bf07c2ab415e"
+    },
+    {
+      "path": "artifacts/reports/aflow_noleak_v5_30k_seed42/training_log.csv",
+      "bytes": 22480,
+      "sha256": "5bc77c23594999703478b7fa585c64b246a81b40d28ba7ba57e3fb0c76ea71e0"
+    },
+    {
+      "path": "artifacts/logs/aflow_noleak_v5_30k_seed42/data_finalize_build_20260825.log",
+      "bytes": 3002,
+      "sha256": "b19239cf5f69d04afa5a02d0df47b00a57f4d4c016b11622d9e9e552767282ae"
+    },
+    {
+      "path": "artifacts/logs/aflow_noleak_v5_30k_seed42/download_30k_20260825.log",
+      "bytes": 3863255,
+      "sha256": "28e945f191cb4a22b5a779fc481f550a121613dfc9a77c452ce4c8c38f9144e0"
+    },
+    {
+      "path": "artifacts/logs/aflow_noleak_v5_30k_seed42/finetune_evaluation_resume.log",
+      "bytes": 4219,
+      "sha256": "e92fa5bcd062a1c2a451ecbdcf6ac985d5b3f9920b03fe2e75eb56bf210e5998"
+    },
+    {
+      "path": "artifacts/logs/aflow_noleak_v5_30k_seed42/finetune_formal.log",
+      "bytes": 96009,
+      "sha256": "59a697dbf7d6f71a29ee52a817118a9030d39ef0798d218cd0cc56e57191f467"
+    },
+    {
+      "path": "artifacts/logs/aflow_noleak_v5_30k_seed42/gpu_usage_15s.csv",
+      "bytes": 30582,
+      "sha256": "c3e38b9555a5f3f972e0c3b1ae8c47e1b9dc0ea1ef5fcf9ae3183ae7c7967ddc"
+    },
+    {
+      "path": "artifacts/logs/aflow_noleak_v5_30k_seed42/orchestration.log",
+      "bytes": 2162,
+      "sha256": "7acd5874586e6b37b22a38ebcda23a4119e1ca96b3d65107ee1f370a342c47fb"
+    },
+    {
+      "path": "artifacts/logs/aflow_noleak_v5_30k_seed42/package_server_transfer_20260825.log",
+      "bytes": 972,
+      "sha256": "a05ab9bec654934a24b1b616dfce5326c8706e7137180e51da3c05fa2a6428ec"
+    },
+    {
+      "path": "artifacts/logs/aflow_noleak_v5_30k_seed42/ssl_formal.log",
+      "bytes": 17588,
+      "sha256": "366cc989d7f87cb60dc35f16e7592fb44ef0d39488b7e67f31e2471598e95df3"
+    },
+    {
+      "path": "artifacts/logs/aflow_noleak_v5_30k_seed42/ssl_reload_smoke_failed_registration.log",
+      "bytes": 2541,
+      "sha256": "0817dd5fce2a25d212401c245c048f62f5d010058b2c34307ad30ce7671e1ff9"
+    },
+    {
+      "path": "artifacts/logs/aflow_noleak_v5_30k_seed42/ssl_reload_smoke_retry.log",
+      "bytes": 750,
+      "sha256": "7fed2b495c5584f0bce04dd0012e2a37064b9b1c8f3c691d0498bc80991a55b0"
+    },
+    {
+      "path": "artifacts/logs/aflow_noleak_v5_30k_seed42/tensorboard/train/events.out.tfevents.1787669037.power24.151406.0.v2",
+      "bytes": 34044,
+      "sha256": "38adaa52ad3a04e5f9134e1cd8e3c1ee318072ab99332b3a3ab783bc9f52526c"
+    },
+    {
+      "path": "artifacts/logs/aflow_noleak_v5_30k_seed42/tensorboard/val/events.out.tfevents.1787669037.power24.151406.1.v2",
+      "bytes": 30210,
+      "sha256": "adce78c0272249b2576490762cb58b9ca37b434bf1026749f71354fa53e92a66"
+    }
+  ],
+  "immutable_data_hashes": {
+    "raw_h5": "d9927f0425de6232a24b8cea2eb8d0c5820e0aa9e29222b7feb621ebc7be08f3",
+    "full_tensor_npz": "9c5edea5e97f1c9b2561bc1c2324bcdd22741b5aea69e7d7c4c25116375a1ff7",
+    "split_npz": "c99d21647489bec3c4a20cafd209ef136b83da966af67e0594f4dc5d0aa5b7a5"
+  },
+  "known_gaps": [
+    "supervised epoch-60/last checkpoint is unavailable; only best and accepted-restored-best remain",
+    "reported best epoch 52 used the final 20-sample validation batch rather than full validation aggregation",
+    "historical download report predates the 2026-08-26 fail-closed report schema"
+  ],
+  "do_not_modify_historical_files": true
+}

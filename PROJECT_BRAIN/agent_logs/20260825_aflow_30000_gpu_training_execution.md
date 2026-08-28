@@ -100,3 +100,19 @@ Exclude reference material, secrets, `.git`, caches, legacy models/checkpoints/r
 - Phase C 仍为 pending；本任务未实现 crystal graph→multi-band sequence。
 - Remote cleanup：确认无训练进程后终止唯一 completed/sleep screen；删除旧 `~/BandStructure AI` mirror 和 26 个 `.cache` 传输/烟测临时对象；保留 `~/BandStructure_AI_30k_20260825` 与 `bandstructure_gpu30k` 环境。
 - Security cleanup：远端 ephemeral SSH public key 删除 1 条、同 tag remaining=0，其他 8 条 authorized keys 保留；新连接确认该 key 无法认证。Windows Temp 删除 41 个任务临时文件（含私钥、公钥、4.5 GB transfer archive），释放 4,529,323,910 bytes；项目内 results archive/manifests 保留。
+
+## 2026-08-27 correction note
+
+本节保留上方 2026-08-25/26 原始执行记录，但以 2026-08-27 对磁盘 JSON/CSV/predictions/log 的只读重算纠正其叙述性漂移：
+
+- SSL epoch 39 正确 val masked MSE/MAE 是 `0.384270 / 0.156710`（标准化六特征），不是 0.395004；
+- reported supervised best gap MAE 是 `0.000348125 eV`，但旧 epoch metric 实际只来自最后 20 条 validation 样本，因此 epoch 52 selection 被判定无效；
+- outer learned line-mode MAE/RMSE 是 `0.000352150 / 0.001863863 eV`；
+- type accuracy/Macro F1 是 `0.947333444 / 0.932648282`；
+- GPU monitor 是 225 samples，不是 145；
+- line-mode target 的解析 input baseline MAE/RMSE 为 0；model-vs-global-DFT MAE 为 0.640281 eV；
+- v5 supervised 独立 final/last checkpoint 不可恢复；现存 best 与 accepted-restored-best 保留；
+- 现存 v5 四类 artifact 为 61 files，统一 retrospective manifest 见 `PROJECT_BRAIN/transfer_manifests/v5_consolidated_artifact_inventory_20260827.json`；
+- v5 状态改为 immutable historical run with invalid checkpoint selection；不得继续把旧表格视为当前无保留验收结论。
+
+完整审计与 v6 修复方案见 `PROJECT_BRAIN/agent_logs/20260827_training_result_reaudit_and_retrain_plan.md`。

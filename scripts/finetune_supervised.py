@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import os
 import shutil
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -38,11 +40,16 @@ from src.engine.finetune_trainer import (
     freeze_encoder_layers as apply_freeze_encoder_layers,
     write_finetune_strategy_report,
 )
-from src.utils.physics_validator import PhysicsValidator
+from src.utils import assert_tensor_on_gpu
+from src.utils.physics_validator import PhysicsValidator, local_curvature
 from src.utils.mc_dropout import mc_dropout_predict_with_type, mc_calibration_check
 from src.utils.visualizer import save_band_overlay_grid
 from src.data.band_structure_dataset import VirtualStrainAugmentation
 from src.data.ood_tensor_builder import build_group_validation_split
+
+
+DEFAULT_SUPERVISED_AUGMENTATION = False
+SUPERVISED_EXECUTION_MODE_REQUIRED = True
 
 
 def configure_tensorflow_runtime(require_gpu: bool = False):
@@ -62,23 +69,12 @@ def configure_tensorflow_runtime(require_gpu: bool = False):
     return gpus
 
 
-def _local_curvature(band: np.ndarray) -> np.ndarray:
-    """Local quadratic curvature via windowed polyfit (±2 points)."""
-    band = np.asarray(band, dtype=np.float64)
-    n = len(band)
-    curv = np.zeros(n, dtype=np.float64)
-    for i in range(n):
-        lo = max(0, i - 2)
-        hi = min(n, i + 3)
-        x_local = np.arange(lo, hi, dtype=np.float64) - float(i)
-        y_local = band[lo:hi]
-        if len(x_local) < 3:
-            if i > 0 and i < n - 1:
-                curv[i] = band[i + 1] - 2.0 * band[i] + band[i - 1]
-            continue
-        coeff = np.polyfit(x_local, y_local, deg=2)
-        curv[i] = 2.0 * coeff[0]
-    return curv.astype(np.float32)
+def _local_curvature(
+    band: np.ndarray,
+    segment_ids: np.ndarray | None = None,
+) -> np.ndarray:
+    """Compatibility wrapper for the shared segment-aware implementation."""
+    return local_curvature(band, segment_ids=segment_ids)
 
 
 def load_norm_stats(path: str) -> Tuple[np.ndarray, np.ndarray]:
@@ -117,47 +113,74 @@ def tensor_gap_from_extrema(X_raw: np.ndarray) -> np.ndarray:
     return (cbm_min - vbm_max).astype(np.float32)
 
 
-def load_dataset(npz_path: str, norm_path: str) -> Dict[str, np.ndarray]:
-    data = np.load(npz_path)
+def load_dataset(
+    npz_path: str,
+    norm_path: str,
+    include_outer_test: bool = True,
+) -> Dict[str, np.ndarray]:
     mean, std = load_norm_stats(norm_path)
-
-    X_train_raw = data["X_train"].astype(np.float32)
-    X_test_raw = data["X_test"].astype(np.float32)
-    X_train = (flatten_tensor(X_train_raw) - mean) / std
-    X_test = (flatten_tensor(X_test_raw) - mean) / std
-
-    y_train = data["y_train"].astype(np.float32)
-    y_test = data["y_test"].astype(np.float32)
-
-    if "y_type_train" in data and "y_type_test" in data:
-        type_train = data["y_type_train"].astype(np.int32)
-        type_test = data["y_type_test"].astype(np.int32)
-    else:
-        print(
-            "[WARN] Dataset has no provider gap-type labels; deriving labels from "
-            "resampled extrema. Do not treat this fallback as independent type evaluation."
+    with np.load(npz_path) as data:
+        X_train_raw = data["X_train"].astype(np.float32)
+        segment_ids_train = (
+            data["segment_ids_train"].astype(np.int32)
+            if "segment_ids_train" in data
+            else np.zeros((len(X_train_raw), X_train_raw.shape[2]), dtype=np.int32)
         )
-        type_train = infer_gap_type_labels(X_train_raw, y_train)
-        type_test = infer_gap_type_labels(X_test_raw, y_test)
+        X_train = (flatten_tensor(X_train_raw) - mean) / std
+        y_train = data["y_train"].astype(np.float32)
+        if "y_type_train" in data:
+            type_train = data["y_type_train"].astype(np.int32)
+        else:
+            print(
+                "[WARN] Dataset has no provider training gap-type labels; deriving "
+                "labels from resampled extrema."
+            )
+            type_train = infer_gap_type_labels(X_train_raw, y_train)
 
-    return {
-        "X_train_raw": X_train_raw,
-        "X_test_raw": X_test_raw,
-        "X_train": X_train,
-        "X_test": X_test,
-        "feature_mean": mean.reshape(-1).astype(np.float32),
-        "feature_std": std.reshape(-1).astype(np.float32),
-        "y_train": y_train,
-        "y_test": y_test,
-        "type_train": type_train,
-        "type_test": type_test,
-        "tensor_gap_train": tensor_gap_from_extrema(X_train_raw),
-        "tensor_gap_test": tensor_gap_from_extrema(X_test_raw),
-        "groups_train": data["groups_train"].astype(np.int32),
-        "groups_test": data["groups_test"].astype(np.int32),
-        "material_ids_train": data["material_ids_train"],
-        "material_ids_test": data["material_ids_test"],
-    }
+        result = {
+            "X_train_raw": X_train_raw,
+            "X_train": X_train,
+            "feature_mean": mean.reshape(-1).astype(np.float32),
+            "feature_std": std.reshape(-1).astype(np.float32),
+            "y_train": y_train,
+            "type_train": type_train,
+            "tensor_gap_train": tensor_gap_from_extrema(X_train_raw),
+            "groups_train": data["groups_train"].astype(np.int32),
+            "segment_ids_train": segment_ids_train,
+            "material_ids_train": data["material_ids_train"].copy(),
+        }
+        if not include_outer_test:
+            return result
+
+        X_test_raw = data["X_test"].astype(np.float32)
+        segment_ids_test = (
+            data["segment_ids_test"].astype(np.int32)
+            if "segment_ids_test" in data
+            else np.zeros((len(X_test_raw), X_test_raw.shape[2]), dtype=np.int32)
+        )
+        X_test = (flatten_tensor(X_test_raw) - mean) / std
+        y_test = data["y_test"].astype(np.float32)
+        if "y_type_test" in data:
+            type_test = data["y_type_test"].astype(np.int32)
+        else:
+            print(
+                "[WARN] Dataset has no provider outer gap-type labels; deriving labels "
+                "from resampled extrema. Do not treat this fallback as independent type evaluation."
+            )
+            type_test = infer_gap_type_labels(X_test_raw, y_test)
+        result.update(
+            {
+                "X_test_raw": X_test_raw,
+                "X_test": X_test,
+                "y_test": y_test,
+                "type_test": type_test,
+                "tensor_gap_test": tensor_gap_from_extrema(X_test_raw),
+                "groups_test": data["groups_test"].astype(np.int32),
+                "segment_ids_test": segment_ids_test,
+                "material_ids_test": data["material_ids_test"].copy(),
+            }
+        )
+    return result
 
 
 def load_kpath_labels(npz_path: str) -> Dict[str, object]:
@@ -172,6 +195,20 @@ def load_kpath_labels(npz_path: str) -> Dict[str, object]:
         if material_id:
             labels[str(material_id)] = sample.get("kpath_labels", [])
     return labels
+
+
+def load_mismatch_material_ids(npz_path: str) -> set[str]:
+    """Read provider-metal/line-mode mismatch IDs from the frozen split audit."""
+    manifest_path = os.path.join(os.path.dirname(npz_path), "ood_split_manifest.json")
+    if not os.path.isfile(manifest_path):
+        return set()
+    with open(manifest_path, "r", encoding="utf-8") as handle:
+        manifest = json.load(handle)
+    audit = manifest.get("metal_feature_audit", {})
+    return {
+        str(material_id)
+        for material_id in audit.get("mismatch_material_ids", [])
+    }
 
 
 def compute_class_weights(y_type: np.ndarray, num_classes: int = 3) -> Dict[int, float]:
@@ -336,6 +373,34 @@ class SupervisedBandGapModel(keras.Model):
         self.topology_margin = 0.10
         self.gap_loss_fn = keras.losses.MeanSquaredError()
         self.type_loss_fn = keras.losses.CategoricalCrossentropy(reduction="none")
+        self.loss_weights_dict = {"gap": 1.0, "type": 1.0}
+        self.gap_loss_tracker = keras.metrics.Mean(name="gap_loss")
+        self.gap_mae_tracker = keras.metrics.MeanAbsoluteError(name="gap_mae")
+        self.type_loss_tracker = keras.metrics.Mean(name="type_loss")
+        self.type_acc_tracker = keras.metrics.CategoricalAccuracy(name="type_acc")
+        self.type_macro_f1_tracker = keras.metrics.F1Score(
+            average="macro",
+            name="type_macro_f1",
+        )
+        self.topology_loss_tracker = keras.metrics.Mean(name="topology_loss")
+        self.entropy_loss_tracker = keras.metrics.Mean(name="entropy_loss")
+        self.extremum_loss_tracker = keras.metrics.Mean(name="extremum_loss")
+        self.temperature_tracker = keras.metrics.Mean(name="temperature")
+
+    @property
+    def metrics(self):
+        """Stateful full-epoch metrics reset automatically by Keras."""
+        return [
+            self.gap_loss_tracker,
+            self.gap_mae_tracker,
+            self.type_loss_tracker,
+            self.type_acc_tracker,
+            self.type_macro_f1_tracker,
+            self.topology_loss_tracker,
+            self.entropy_loss_tracker,
+            self.extremum_loss_tracker,
+            self.temperature_tracker,
+        ]
 
     def _forward(self, x, training=False):
         encoded = self.encoder.encoder(x, training=training)
@@ -415,22 +480,81 @@ class SupervisedBandGapModel(keras.Model):
             return tf.reduce_sum(per_sample * weights) / tf.reduce_sum(weights)
         return tf.reduce_mean(per_sample)
 
-    def _metrics_dict(self, total_loss, gap_loss, type_loss, topology_loss, entropy_loss, extremum_loss, y, pred):
-        gap_mae = tf.reduce_mean(tf.abs(y["gap"] - pred["gap"]))
-        type_acc = tf.reduce_mean(
-            tf.cast(tf.equal(tf.argmax(y["type"], axis=1), tf.argmax(pred["type"], axis=1)), tf.float32)
-        )
+    def _metrics_dict(
+        self,
+        total_loss,
+        gap_loss,
+        type_loss,
+        topology_loss,
+        entropy_loss,
+        extremum_loss,
+        y,
+        pred,
+        sample_weight=None,
+    ):
+        del total_loss
+        batch_weight = tf.cast(tf.shape(y["gap"])[0], tf.float32)
+        type_metric_weight = batch_weight
+        if (
+            sample_weight is not None
+            and isinstance(sample_weight, dict)
+            and "type" in sample_weight
+        ):
+            type_metric_weight = tf.reduce_sum(
+                tf.cast(sample_weight["type"], tf.float32)
+            )
+        active_topology = tf.reduce_sum(y["type"][:, 1] + y["type"][:, 2])
+        topology_metric_weight = tf.maximum(active_topology, 1.0)
         temperature = 0.01 + 0.49 * tf.nn.sigmoid(self.gap_head.temperature_raw)
+
+        self.gap_loss_tracker.update_state(gap_loss, sample_weight=batch_weight)
+        self.gap_mae_tracker.update_state(y["gap"], pred["gap"])
+        self.type_loss_tracker.update_state(
+            type_loss,
+            sample_weight=type_metric_weight,
+        )
+        self.type_acc_tracker.update_state(y["type"], pred["type"])
+        self.type_macro_f1_tracker.update_state(y["type"], pred["type"])
+        self.topology_loss_tracker.update_state(
+            topology_loss,
+            sample_weight=topology_metric_weight,
+        )
+        self.entropy_loss_tracker.update_state(
+            entropy_loss,
+            sample_weight=batch_weight,
+        )
+        self.extremum_loss_tracker.update_state(
+            extremum_loss,
+            sample_weight=batch_weight,
+        )
+        self.temperature_tracker.update_state(
+            temperature,
+            sample_weight=batch_weight,
+        )
+
+        gap_loss_result = self.gap_loss_tracker.result()
+        type_loss_result = self.type_loss_tracker.result()
+        topology_loss_result = self.topology_loss_tracker.result()
+        entropy_loss_result = self.entropy_loss_tracker.result()
+        extremum_loss_result = self.extremum_loss_tracker.result()
+        aggregate_loss = (
+            gap_loss_result
+            + self.loss_weights_dict["type"] * type_loss_result
+            + self.topology_weight * topology_loss_result
+            + self.entropy_weight * entropy_loss_result
+            + self.extremum_weight * extremum_loss_result
+        )
         return {
-            "loss": total_loss,
-            "gap_loss": gap_loss,
-            "gap_mae": gap_mae,
-            "type_loss": type_loss,
-            "type_acc": type_acc,
-            "topology_loss": topology_loss,
-            "entropy_loss": entropy_loss,
-            "extremum_loss": extremum_loss,
-            "temperature": temperature,
+            "loss": aggregate_loss,
+            "gap_loss": gap_loss_result,
+            "gap_mae": self.gap_mae_tracker.result(),
+            "type_loss": type_loss_result,
+            "type_acc": self.type_acc_tracker.result(),
+            "type_macro_f1": self.type_macro_f1_tracker.result(),
+            "topology_loss": topology_loss_result,
+            "entropy_loss": entropy_loss_result,
+            "extremum_loss": extremum_loss_result,
+            "temperature": self.temperature_tracker.result(),
         }
 
     def train_step(self, data):
@@ -457,7 +581,17 @@ class SupervisedBandGapModel(keras.Model):
             for grad, var in zip(gradients, variables)
         ]
         self.optimizer.apply_gradients(zip(scaled_gradients, variables))
-        return self._metrics_dict(total_loss, gap_loss, type_loss, topology_loss, entropy_loss, extremum_loss, y, pred)
+        return self._metrics_dict(
+            total_loss,
+            gap_loss,
+            type_loss,
+            topology_loss,
+            entropy_loss,
+            extremum_loss,
+            y,
+            pred,
+            sample_weight=sample_weight,
+        )
 
     def test_step(self, data):
         x, y, sample_weight = self._split_batch(data)
@@ -473,7 +607,17 @@ class SupervisedBandGapModel(keras.Model):
             + self.entropy_weight * entropy_loss
             + self.extremum_weight * extremum_loss
         )
-        return self._metrics_dict(total_loss, gap_loss, type_loss, topology_loss, entropy_loss, extremum_loss, y, pred)
+        return self._metrics_dict(
+            total_loss,
+            gap_loss,
+            type_loss,
+            topology_loss,
+            entropy_loss,
+            extremum_loss,
+            y,
+            pred,
+            sample_weight=sample_weight,
+        )
 
 
 def freeze_encoder_layers(ssl_encoder: keras.Model, freeze_layers: int) -> None:
@@ -501,7 +645,13 @@ def freeze_encoder_layers(ssl_encoder: keras.Model, freeze_layers: int) -> None:
     print(f"Frozen first {freeze_to}/{total_layers} transformer layers (incl. FFN sub-layers)")
 
 
-def save_supervised_model_artifacts(model: keras.Model, model_path: str, config: Dict) -> Dict[str, str]:
+def save_supervised_model_artifacts(
+    model: keras.Model,
+    model_path: str,
+    config: Dict,
+    *,
+    save_weights: bool = True,
+) -> Dict[str, str]:
     """Save supervised model artifacts in a robust subclass-friendly format."""
     os.makedirs(os.path.dirname(model_path), exist_ok=True)
 
@@ -518,7 +668,12 @@ def save_supervised_model_artifacts(model: keras.Model, model_path: str, config:
         "config": config_path,
     }
 
-    model.save_weights(weights_path)
+    if save_weights:
+        model.save_weights(weights_path)
+    elif not os.path.isfile(weights_path):
+        raise FileNotFoundError(
+            f"Frozen accepted weights are missing before config write: {weights_path}"
+        )
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
 
@@ -526,7 +681,13 @@ def save_supervised_model_artifacts(model: keras.Model, model_path: str, config:
 
 
 def supervised_report_path(output_dir: str, report_date: str | None = None) -> str:
-    date_token = report_date or datetime.now().strftime("%Y%m%d")
+    date_token = (
+        report_date
+        if report_date is not None
+        else datetime.now().strftime("%Y%m%d")
+    )
+    if len(date_token) != 8 or not date_token.isdigit():
+        raise ValueError("report_date must use YYYYMMDD digits")
     return os.path.join(output_dir, f"finetune_supervised_report_{date_token}.md")
 
 
@@ -540,6 +701,11 @@ def clean_finetune_artifacts(output_dir: str, checkpoint_dir: str, model_path: s
     ]:
         if path and os.path.exists(path):
             os.remove(path)
+
+
+def should_compile_supervised_model(*, evaluation_only: bool) -> bool:
+    """Evaluation-only restores frozen weights and does not need an optimizer."""
+    return not evaluation_only
 
 
 def compile_model(
@@ -605,6 +771,208 @@ class WarmupCosineDecay(keras.callbacks.Callback):
             opt.learning_rate.assign(float(lr))
         else:
             tf.keras.backend.set_value(opt.learning_rate, float(lr))
+
+
+def build_supervised_callbacks(args: argparse.Namespace):
+    """Build callbacks around full inner-validation aggregate metrics."""
+    os.makedirs(args.checkpoint_dir, exist_ok=True)
+    os.makedirs(args.output_dir, exist_ok=True)
+    return [
+        WarmupCosineDecay(
+            target_lr=args.learning_rate,
+            warmup_epochs=args.warmup_epochs,
+            total_epochs=args.epochs,
+            min_lr=args.min_lr,
+        ),
+        keras.callbacks.ModelCheckpoint(
+            filepath=os.path.join(args.checkpoint_dir, "best.weights.h5"),
+            monitor="val_loss",
+            mode="min",
+            save_best_only=True,
+            save_weights_only=True,
+        ),
+        keras.callbacks.ModelCheckpoint(
+            filepath=os.path.join(args.checkpoint_dir, "last.weights.h5"),
+            monitor="val_loss",
+            mode="min",
+            save_best_only=False,
+            save_weights_only=True,
+        ),
+        keras.callbacks.EarlyStopping(
+            monitor="val_loss",
+            mode="min",
+            patience=int(getattr(args, "early_stopping_patience", 20)),
+            restore_best_weights=False,
+        ),
+        LearningRateLogger(),
+        keras.callbacks.CSVLogger(os.path.join(args.output_dir, "training_log.csv")),
+    ]
+
+
+def _sha256_file(path: str | os.PathLike[str]) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _portable_artifact_path(path: str | os.PathLike[str]) -> str:
+    resolved = Path(path).resolve()
+    try:
+        return resolved.relative_to(Path.cwd().resolve()).as_posix()
+    except ValueError:
+        return str(resolved)
+
+
+def freeze_supervised_states(
+    model,
+    checkpoint_dir: str,
+    accepted_model_path: str,
+    output_dir: str,
+    history,
+) -> Dict[str, object]:
+    """Freeze best/last/accepted states before any outer-test access."""
+    best_path = Path(checkpoint_dir) / "best.weights.h5"
+    last_path = Path(checkpoint_dir) / "last.weights.h5"
+    for label, path in (("best", best_path), ("last", last_path)):
+        if not path.is_file():
+            raise FileNotFoundError(f"Missing supervised {label} checkpoint: {path}")
+
+    accepted_path = Path(accepted_model_path)
+    state_paths = {
+        best_path.resolve(),
+        last_path.resolve(),
+        accepted_path.resolve(),
+    }
+    if len(state_paths) != 3:
+        raise ValueError(
+            "Supervised best, last, and accepted state paths must be distinct"
+        )
+    accepted_path.parent.mkdir(parents=True, exist_ok=True)
+    model.load_weights(str(best_path))
+    model.save_weights(str(accepted_path))
+
+    val_loss = [float(value) for value in history.history.get("val_loss", [])]
+    best_epoch = int(np.argmin(val_loss)) + 1 if val_loss else None
+
+    def state(path: Path, source: str | None = None) -> Dict[str, object]:
+        item: Dict[str, object] = {
+            "path": _portable_artifact_path(path),
+            "bytes": path.stat().st_size,
+            "sha256": _sha256_file(path),
+        }
+        if source is not None:
+            item["source"] = source
+        return item
+
+    manifest: Dict[str, object] = {
+        "schema_version": 1,
+        "created_at": datetime.now().astimezone().isoformat(),
+        "selection_scope": "inner group-disjoint validation only",
+        "outer_test_accessed": False,
+        "monitor": "val_loss",
+        "best_epoch_one_based": best_epoch,
+        "epochs_recorded": len(history.epoch),
+        "states": {
+            "best": state(best_path),
+            "last": state(last_path),
+            "accepted": state(accepted_path, source="restored_best"),
+        },
+    }
+    output_path = Path(output_dir) / "inner_selection_manifest.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output_path.with_name(output_path.name + ".tmp")
+    with open(temporary, "w", encoding="utf-8") as handle:
+        json.dump(manifest, handle, indent=2, ensure_ascii=False)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, output_path)
+    return manifest
+
+
+def _manifest_state_path(manifest: Dict[str, object], label: str) -> Path:
+    states = manifest.get("states")
+    if not isinstance(states, dict) or not isinstance(states.get(label), dict):
+        raise RuntimeError(f"Inner selection manifest missing {label} state")
+    path = Path(str(states[label].get("path", "")))
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    return path.resolve()
+
+
+def validate_inner_selection_manifest(output_dir: str) -> Dict[str, object]:
+    """Fail closed before outer evaluation unless all frozen states still match."""
+    manifest_path = Path(output_dir) / "inner_selection_manifest.json"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(
+            f"Missing inner selection manifest before outer evaluation: {manifest_path}"
+        )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("outer_test_accessed") is not False:
+        raise RuntimeError("Inner selection manifest is not blind to outer test")
+    if manifest.get("monitor") != "val_loss":
+        raise RuntimeError("Inner selection manifest does not use aggregate val_loss")
+    states = manifest.get("states")
+    if not isinstance(states, dict):
+        raise RuntimeError("Inner selection manifest has no frozen states")
+    resolved_state_paths = []
+    for label in ("best", "last", "accepted"):
+        item = states.get(label)
+        if not isinstance(item, dict):
+            raise RuntimeError(f"Inner selection manifest missing {label} state")
+        path = _manifest_state_path(manifest, label)
+        resolved_state_paths.append(path)
+        if not path.is_file():
+            raise RuntimeError(f"Frozen {label} state is missing: {path}")
+        actual_hash = _sha256_file(path)
+        if actual_hash != item.get("sha256"):
+            raise RuntimeError(
+                f"Frozen {label} state hash mismatch: {actual_hash} != {item.get('sha256')}"
+            )
+        if path.stat().st_size != int(item.get("bytes", -1)):
+            raise RuntimeError(f"Frozen {label} state size mismatch: {path}")
+    if len(set(resolved_state_paths)) != 3:
+        raise RuntimeError(
+            "Frozen supervised best, last, and accepted paths are not distinct"
+        )
+    return manifest
+
+
+def classification_scope_metrics(
+    type_true: np.ndarray,
+    type_pred: np.ndarray,
+    groups: np.ndarray,
+    material_ids: np.ndarray,
+    *,
+    mismatch_material_ids: set[str] | None = None,
+) -> Dict[str, object]:
+    """Report sample-, group-, and feature/label-mismatch classification scope."""
+    true = np.asarray(type_true, dtype=np.int32)
+    predicted = np.argmax(np.asarray(type_pred), axis=1).astype(np.int32)
+    groups = np.asarray(groups, dtype=np.int32)
+    ids = np.asarray([str(value) for value in material_ids])
+    correct = predicted == true
+    group_scores = [
+        float(np.mean(correct[groups == group]))
+        for group in np.unique(groups)
+    ]
+    mismatch_ids = mismatch_material_ids or set()
+    mismatch_mask = np.asarray([value in mismatch_ids for value in ids], dtype=bool)
+    match_mask = ~mismatch_mask
+
+    def subset_accuracy(mask: np.ndarray) -> float | None:
+        return float(np.mean(correct[mask])) if np.any(mask) else None
+
+    return {
+        "sample_accuracy": float(np.mean(correct)),
+        "spacegroup_macro_accuracy": float(np.mean(group_scores)),
+        "spacegroup_count": len(group_scores),
+        "feature_label_match_count": int(np.sum(match_mask)),
+        "feature_label_mismatch_count": int(np.sum(mismatch_mask)),
+        "feature_label_match_accuracy": subset_accuracy(match_mask),
+        "feature_label_mismatch_accuracy": subset_accuracy(mismatch_mask),
+    }
 
 
 def evaluate_predictions(
@@ -676,8 +1044,8 @@ def save_parity_plot(y_true: np.ndarray, y_pred: np.ndarray, output_path: str, t
         va="top",
         bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.85, "edgecolor": "0.75"},
     )
-    plt.xlabel("DFT band gap (eV)")
-    plt.ylabel("Predicted band gap (eV)")
+    plt.xlabel("Analytic line-mode tensor gap (eV)")
+    plt.ylabel("Learned soft-extremum gap (eV)")
     plt.title(title)
     plt.legend()
     plt.grid(alpha=0.25)
@@ -737,7 +1105,7 @@ def save_error_histogram(y_true: np.ndarray, y_pred: np.ndarray, output_path: st
     plt.hist(errors, bins=min(24, max(8, len(errors) // 2)), color="#4C78A8", edgecolor="white", alpha=0.9)
     plt.axvline(0.0, color="black", linestyle="--", linewidth=1.2)
     plt.axvline(float(np.mean(errors)), color="#D62728", linestyle="-", linewidth=1.2, label=f"mean={np.mean(errors):.3f} eV")
-    plt.xlabel("Prediction error: predicted - DFT (eV)")
+    plt.xlabel("Residual: learned soft-extremum - analytic line-mode gap (eV)")
     plt.ylabel("Count")
     plt.title(title)
     plt.legend()
@@ -931,8 +1299,18 @@ def save_curvature_zoom_examples(
     X_recon_raw: np.ndarray,
     material_ids: np.ndarray,
     output_path: str,
+    segment_ids: np.ndarray | None = None,
     max_examples: int = 3,
 ) -> None:
+    if segment_ids is None:
+        segments = np.zeros((len(X_true_raw), X_true_raw.shape[2]), dtype=np.int32)
+    else:
+        segments = np.asarray(segment_ids, dtype=np.int32)
+        expected = (len(X_true_raw), X_true_raw.shape[2])
+        if segments.shape != expected:
+            raise ValueError(
+                f"Expected segment_ids with shape {expected}, got {segments.shape}"
+            )
     selected = np.linspace(0, len(X_true_raw) - 1, min(max_examples, len(X_true_raw)), dtype=int)
     k_axis = np.linspace(0, 1, X_true_raw.shape[2])
     fig, axes = plt.subplots(len(selected), 2, figsize=(10, max(3.2, 3.0 * len(selected))), sharex=False)
@@ -944,12 +1322,12 @@ def save_curvature_zoom_examples(
         recon_vbm_e = X_recon_raw[idx, 0, :, 0]
         recon_cbm_e = X_recon_raw[idx, 1, :, 0]
         true_energy_curv = [
-            _local_curvature(true_vbm_e),
-            _local_curvature(true_cbm_e),
+            _local_curvature(true_vbm_e, segment_ids=segments[idx]),
+            _local_curvature(true_cbm_e, segment_ids=segments[idx]),
         ]
         recon_energy_curv = [
-            _local_curvature(recon_vbm_e),
-            _local_curvature(recon_cbm_e),
+            _local_curvature(recon_vbm_e, segment_ids=segments[idx]),
+            _local_curvature(recon_cbm_e, segment_ids=segments[idx]),
         ]
         vbm_center = int(np.argmax(true_vbm_e))
         cbm_center = int(np.argmin(true_cbm_e))
@@ -1010,12 +1388,44 @@ def save_latent_tsne(model: keras.Model, data: Dict[str, np.ndarray], output_pat
     plt.close()
 
 
-def physics_violation_stats(y_pred: np.ndarray, X_recon_raw: np.ndarray) -> Dict[str, float]:
+def physics_violation_stats(
+    y_pred: np.ndarray,
+    X_recon_raw: np.ndarray,
+    segment_ids: np.ndarray | None = None,
+) -> Dict[str, float]:
     pred_gap = y_pred.reshape(-1)
+    if segment_ids is None:
+        segments = np.zeros(
+            (len(X_recon_raw), X_recon_raw.shape[2]),
+            dtype=np.int32,
+        )
+    else:
+        segments = np.asarray(segment_ids, dtype=np.int32)
+        expected = (len(X_recon_raw), X_recon_raw.shape[2])
+        if segments.shape != expected:
+            raise ValueError(
+                f"Expected segment_ids with shape {expected}, got {segments.shape}"
+            )
     vbm_center = np.argmax(X_recon_raw[:, 0, :, 0], axis=1)
     cbm_center = np.argmin(X_recon_raw[:, 1, :, 0], axis=1)
-    vbm_curves = np.asarray([_local_curvature(X_recon_raw[i, 0, :, 0]) for i in range(len(X_recon_raw))])
-    cbm_curves = np.asarray([_local_curvature(X_recon_raw[i, 1, :, 0]) for i in range(len(X_recon_raw))])
+    vbm_curves = np.asarray(
+        [
+            _local_curvature(
+                X_recon_raw[index, 0, :, 0],
+                segment_ids=segments[index],
+            )
+            for index in range(len(X_recon_raw))
+        ]
+    )
+    cbm_curves = np.asarray(
+        [
+            _local_curvature(
+                X_recon_raw[index, 1, :, 0],
+                segment_ids=segments[index],
+            )
+            for index in range(len(X_recon_raw))
+        ]
+    )
     vbm_curv = np.asarray([vbm_curves[i, vbm_center[i]] for i in range(len(X_recon_raw))])
     cbm_curv = np.asarray([cbm_curves[i, cbm_center[i]] for i in range(len(X_recon_raw))])
     return {
@@ -1086,49 +1496,83 @@ def save_markdown_report(summary: Dict, output_path: str) -> None:
     class_weights = summary["class_weights"]
     violation = summary["physics_violation_rates"]
     roc_auc = summary["roc_auc"]
+    experiment_id = summary.get("experiment_id", "unknown_experiment")
+    report_date = summary.get("report_date", datetime.now().strftime("%Y%m%d"))
+    source = str(summary.get("source", "unknown")).upper()
+    tensor_npz = summary.get("tensor_npz", "unknown")
+    gap_semantics = summary.get("gap_semantics", {})
+    mc = summary.get("mc_uncertainty", {})
+    classification_scope = summary.get("classification_scope", {})
+    outputs = summary.get("outputs", {})
+    metrics_path = outputs.get("metrics", "metrics_summary.json")
+    predictions_path = outputs.get("predictions", "ood_test_predictions.json")
+    model_path = outputs.get("model", "finetuned.weights.h5")
+    figures_path = str(Path(str(metrics_path)).parent / "*.png").replace("\\", "/")
+    match_accuracy = classification_scope.get("feature_label_match_accuracy")
+    mismatch_accuracy = classification_scope.get("feature_label_mismatch_accuracy")
+    match_accuracy_text = "n/a" if match_accuracy is None else f"{float(match_accuracy):.2%}"
+    mismatch_accuracy_text = (
+        "n/a" if mismatch_accuracy is None else f"{float(mismatch_accuracy):.2%}"
+    )
 
-    body = f"""# Supervised Fine-tuning Report - 2026-06-04
+    body = f"""# Supervised Fine-tuning Report — {experiment_id} — {report_date}
 
-## Scope
+## Scope and provenance
 
-- Input tensor: `data/processed/materials_project/ood_tensors/band_tensors_ood_split.npz`
-- Tensor contract: `(N, 2, 128, 3)` -> `(N, 128, 6)`
+- Source: `{source}`
+- Experiment: `{experiment_id}`
+- Input tensor: `{tensor_npz}`
+- Tensor contract: `(N, 2, 128, 3)` → `(N, 128, 6)`
 - Features: `[VBM_E, VBM_curv, VBM_k_dist, CBM_E, CBM_curv, CBM_k_dist]`
-- OOD split: grouped by `spacegroup_number`, no random sample-wise split.
-- Regression target: line-mode tensor gap `E_CBM - E_VBM`, not global MP DFT gap.
-- Gap head: sequence-local extremum expected-value head with learned temperature; it denormalizes VBM_E/CBM_E internally, so gap loss and MAE are computed in eV.
-- Type head: pooled encoder features plus topology priors `[|k_CBM-k_VBM|, overlap(P_vbm,P_cbm), symmetric_KL]`.
-- Auxiliary losses: topology consistency plus entropy sharpening of extremum probabilities.
-- Global DFT gap is reported only as an information-bottleneck residual.
+- Holdout scope: **space-group-disjoint outer OOD**; this is not composition-, prototype-, or source-OOD.
+- Model selection: complete inner group-disjoint validation aggregate `val_loss`; outer test is loaded only after best/last/accepted states are frozen.
+- Regression target: exact line-mode tensor functional `min(CBM_E) - max(VBM_E)` derived from the input E(k).
+- Interpretation: {gap_semantics.get("interpretation", "learned soft-extremum approximation, not independent DFT prediction")}.
+- Global provider DFT gap is reported separately as a domain/information-bottleneck residual.
 
-## Imbalance Fix
+## Analytic baseline and learned approximation
+
+- Analytic identity baseline MAE: {float(gap_semantics.get("analytic_identity_baseline_mae_ev", 0.0)):.6f} eV
+- Analytic identity baseline RMSE: {float(gap_semantics.get("analytic_identity_baseline_rmse_ev", 0.0)):.6f} eV
+- Learned soft-extremum MAE: {test["line_mode_gap_mae"]:.6f} eV
+- Learned soft-extremum RMSE: {test["line_mode_gap_rmse"]:.6f} eV
+
+## Classification weighting
 
 - Classification loss: Categorical Crossentropy
-- Weighting policy: class weights are applied as type-head sample weights.
+- Weighting policy: class weights are applied only on inner training.
 - Class weights: {class_weights}
 
-## OOD Test Metrics
+## Outer OOD test metrics
 
-- Line-mode Gap MAE: {test["line_mode_gap_mae"]:.6f} eV
-- Line-mode Gap RMSE: {test["line_mode_gap_rmse"]:.6f} eV
-- DFT Gap Residual MAE: {test["dft_gap_residual_mae"]:.6f} eV
-- Model vs Global DFT MAE: {test["model_vs_global_dft_mae"]:.6f} eV
-- R2: {test["r2"]:.6f}
-- Accuracy: {test["type_acc"]:.6f}
+- Model vs global DFT MAE: {test["model_vs_global_dft_mae"]:.6f} eV
+- Tensor vs global DFT residual MAE: {test["dft_gap_residual_mae"]:.6f} eV
+- Line-mode approximation R²: {test["r2"]:.6f}
+- Sample-weighted accuracy: {test["type_acc"]:.6f}
+- Spacegroup-macro accuracy: {float(classification_scope.get("spacegroup_macro_accuracy", 0.0)):.2%}
+- Feature/label match: {classification_scope.get("feature_label_match_count", 0)} samples, accuracy {match_accuracy_text}
+- Feature/label mismatch: {classification_scope.get("feature_label_mismatch_count", 0)} samples
+- Feature/label mismatch accuracy: {mismatch_accuracy_text}
 - Macro F1: {test["macro_f1"]:.6f}
-- Direct Gap Recall: {test["direct_gap_recall"]:.6f}
+- Direct-gap recall: {test["direct_gap_recall"]:.6f}
 - Direct AUC: {roc_auc.get("direct")}
 - Indirect AUC: {roc_auc.get("indirect")}
 
-## Train Metrics
+## Train metrics
 
-- Line-mode Gap MAE: {train["line_mode_gap_mae"]:.6f} eV
-- DFT Gap Residual MAE: {train["dft_gap_residual_mae"]:.6f} eV
+- Learned line-mode MAE: {train["line_mode_gap_mae"]:.6f} eV
+- Tensor vs global DFT residual MAE: {train["dft_gap_residual_mae"]:.6f} eV
 - Accuracy: {train["type_acc"]:.6f}
 - Macro F1: {train["macro_f1"]:.6f}
-- Direct Gap Recall: {train["direct_gap_recall"]:.6f}
 
-## Physics Violation Rates
+## Uncertainty diagnostics
+
+- Raw 95% interval coverage: {float(mc.get("raw_95_interval_coverage", 0.0)):.2%}
+- Tolerance-augmented coverage: {float(mc.get("tolerance_augmented_coverage", 0.0)):.2%}
+- Diagnostic tolerance: {float(mc.get("tolerance_ev", 0.0)):.6f} eV
+- The tolerance-augmented value is not a calibrated 95% confidence interval.
+
+## Segment-aware physics diagnostics
 
 - Negative predicted gap: {violation["negative_predicted_gap_rate"]:.6f}
 - VBM positive curvature: {violation["vbm_positive_curvature_rate"]:.6f}
@@ -1139,20 +1583,44 @@ def save_markdown_report(summary: Dict, output_path: str) -> None:
 
 ## Outputs
 
-- Metrics: `artifacts/reports/mp/finetune_supervised/metrics_summary.json`
-- Predictions: `artifacts/reports/mp/finetune_supervised/ood_test_predictions.json`
-- Figures: `artifacts/reports/mp/finetune_supervised/*.png`
-- Model weights: `artifacts/models/mp/finetuned_gap_predictor.weights.h5`
+- Metrics: `{metrics_path}`
+- Predictions: `{predictions_path}`
+- Figures: `{figures_path}`
+- Accepted restored-best weights: `{model_path}`
 """
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(body)
+    Path(output_path).write_text(body, encoding="utf-8")
+
+
+def save_report_bundle(
+    summary: Dict,
+    output_dir: str,
+    report_date: str,
+) -> Dict[str, str]:
+    """Write the dated report and an atomically refreshed stable alias."""
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    dated = Path(supervised_report_path(str(output), report_date))
+    latest = output / "latest_training_report.md"
+    save_markdown_report(summary, str(dated))
+    temporary = latest.with_name(latest.name + ".tmp")
+    shutil.copyfile(dated, temporary)
+    os.replace(temporary, latest)
+    return {"dated": str(dated), "latest": str(latest)}
 
 
 def restore_model_for_evaluation(
     model: keras.Model,
     checkpoint_path: str,
     history_csv_path: str,
+    selection_manifest: Dict[str, object] | None = None,
 ) -> keras.callbacks.History:
+    if selection_manifest is not None:
+        expected_best = _manifest_state_path(selection_manifest, "best")
+        actual_best = Path(checkpoint_path).resolve()
+        if actual_best != expected_best:
+            raise RuntimeError(
+                f"Evaluation checkpoint does not match frozen best path: {actual_best} != {expected_best}"
+            )
     for path in (checkpoint_path, history_csv_path):
         if not os.path.isfile(path):
             raise FileNotFoundError(path)
@@ -1184,20 +1652,29 @@ def fit_or_restore_history(
     val_ds,
     epochs: int,
     callbacks,
+    selection_manifest: Dict[str, object] | None = None,
 ) -> keras.callbacks.History:
     if evaluation_only:
-        return restore_model_for_evaluation(model, checkpoint_path, history_csv_path)
+        return restore_model_for_evaluation(
+            model,
+            checkpoint_path,
+            history_csv_path,
+            selection_manifest=selection_manifest,
+        )
     return model.fit(
         train_ds,
         validation_data=val_ds,
         epochs=epochs,
         callbacks=callbacks,
+        shuffle=False,
         verbose=2,
     )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fine-tune SSL encoder for gap prediction")
+    parser.add_argument("--experiment-id", default="unversioned_experiment")
+    parser.add_argument("--source", choices=("mp", "aflow"), default="mp")
     parser.add_argument("--tensor-npz", default="./data/processed/materials_project/ood_tensors/band_tensors_ood_split.npz")
     parser.add_argument("--encoder", default="./artifacts/models/mp/ssl_mbm_pretrained.keras")
     parser.add_argument("--norm", default="./artifacts/models/mp/ssl_mbm_norm_stats.json")
@@ -1233,43 +1710,69 @@ def main() -> None:
         action="store_true",
         help="legacy only: force zero gap for explicitly Fermi-anchored input tensors",
     )
-    parser.add_argument(
+    execution_mode = parser.add_mutually_exclusive_group(
+        required=SUPERVISED_EXECUTION_MODE_REQUIRED
+    )
+    execution_mode.add_argument(
+        "--train-only",
+        action="store_true",
+        help="fit on inner train/validation only, freeze best/last state, and do not load outer test arrays",
+    )
+    execution_mode.add_argument(
         "--evaluation-only",
         action="store_true",
-        help="skip fit, restore best checkpoint and existing CSV history, then regenerate evaluation artifacts",
+        help="skip fit, require the frozen best checkpoint and existing CSV history, then load outer test and regenerate evaluation artifacts",
     )
     parser.add_argument("--fresh", action="store_true", help="remove old fine-tuning artifacts before training")
-    parser.add_argument("--augment", action="store_true", default=True, help="apply virtual strain augmentation to training data")
+    parser.add_argument(
+        "--augment",
+        action="store_true",
+        default=DEFAULT_SUPERVISED_AUGMENTATION,
+        help="explicitly enable the experimental whole-path k-warp augmentation",
+    )
     parser.add_argument("--strain-scale", type=float, default=0.01, help="virtual strain magnitude (default: 0.01)")
     args = parser.parse_args()
 
     configure_tensorflow_runtime(require_gpu=args.require_gpu)
     tf.keras.utils.set_random_seed(args.random_state)
+    if args.evaluation_only and args.fresh:
+        raise ValueError("--evaluation-only cannot be combined with --fresh")
+    selection_manifest = None
+    if args.evaluation_only:
+        selection_manifest = validate_inner_selection_manifest(args.output_dir)
     if args.fresh:
         clean_finetune_artifacts(args.output_dir, args.checkpoint_dir, args.model_path)
     os.makedirs(args.output_dir, exist_ok=True)
     os.makedirs(args.checkpoint_dir, exist_ok=True)
 
-    data = load_dataset(args.tensor_npz, args.norm)
-    kpath_labels_by_material = load_kpath_labels(args.tensor_npz)
-    print("Loaded OOD split")
+    data = load_dataset(
+        args.tensor_npz,
+        args.norm,
+        include_outer_test=not args.train_only,
+    )
+    kpath_labels_by_material = (
+        {} if args.train_only else load_kpath_labels(args.tensor_npz)
+    )
+    print("Loaded outer-training split")
     print(f"  train: {data['X_train'].shape}, groups={len(set(data['groups_train'].tolist()))}")
-    print(f"  test:  {data['X_test'].shape}, groups={len(set(data['groups_test'].tolist()))}")
-    print(f"  group overlap: {set(data['groups_train'].tolist()).intersection(set(data['groups_test'].tolist()))}")
+    if not args.train_only:
+        print(f"  test:  {data['X_test'].shape}, groups={len(set(data['groups_test'].tolist()))}")
+        print(f"  group overlap: {set(data['groups_train'].tolist()).intersection(set(data['groups_test'].tolist()))}")
 
-    # Class distribution check
     train_types, train_counts = np.unique(data["type_train"], return_counts=True)
-    test_types, test_counts = np.unique(data["type_test"], return_counts=True)
     type_names = {0: "metal", 1: "direct", 2: "indirect"}
     print("  class distribution:")
     print(f"    train: {', '.join(f'{type_names.get(t,t)}={c}' for t,c in zip(train_types, train_counts))}")
-    print(f"    test:  {', '.join(f'{type_names.get(t,t)}={c}' for t,c in zip(test_types, test_counts))}")
-    missing_classes = set([0, 1, 2]) - set(test_types.tolist())
-    if missing_classes:
-        missing_names = [type_names[c] for c in missing_classes]
-        print(f"  ** WARNING: test set missing classes: {missing_names}. These metrics will be unreliable.")
-        print(f"     Re-run `python -m src.data.ood_tensor_builder` with --random-state to try another split,")
-        print(f"     or increase the dataset size so all classes appear in the test split.")
+    if not args.train_only:
+        test_types, test_counts = np.unique(data["type_test"], return_counts=True)
+        print(f"    test:  {', '.join(f'{type_names.get(t,t)}={c}' for t,c in zip(test_types, test_counts))}")
+        missing_classes = set([0, 1, 2]) - set(test_types.tolist())
+        if missing_classes:
+            missing_names = [type_names[c] for c in missing_classes]
+            print(
+                f"  [WARN] Frozen outer test is missing classes: {missing_names}; "
+                "report this limitation without changing the accepted split."
+            )
 
     fit_idx, val_idx = build_group_validation_split(
         data["groups_train"],
@@ -1316,41 +1819,35 @@ def main() -> None:
         feature_std=data["feature_std"],
         metal_anchor_gate_enabled=args.enable_metal_anchor_gate,
     )
-    model(tf.zeros([1, data["X_train"].shape[1], data["X_train"].shape[2]], dtype=tf.float32))
-    compile_model(
-        model,
-        args.learning_rate,
-        args.type_weight,
-        class_weights=class_weights,
-        encoder_learning_rate=args.encoder_learning_rate,
-        topology_weight=args.topology_weight,
-        entropy_weight=args.entropy_weight,
-        extremum_weight=args.extremum_weight,
+    probe = model(
+        tf.zeros(
+            [1, data["X_train"].shape[1], data["X_train"].shape[2]],
+            dtype=tf.float32,
+        )
     )
+    assert_tensor_on_gpu(
+        probe["gap"],
+        "supervised gap-head Conv1D forward",
+        require_gpu=args.require_gpu,
+    )
+    assert_tensor_on_gpu(
+        probe["type"],
+        "supervised type-head forward",
+        require_gpu=args.require_gpu,
+    )
+    if should_compile_supervised_model(evaluation_only=args.evaluation_only):
+        compile_model(
+            model,
+            args.learning_rate,
+            args.type_weight,
+            class_weights=class_weights,
+            encoder_learning_rate=args.encoder_learning_rate,
+            topology_weight=args.topology_weight,
+            entropy_weight=args.entropy_weight,
+            extremum_weight=args.extremum_weight,
+        )
 
-    callbacks = [
-        WarmupCosineDecay(
-            target_lr=args.learning_rate,
-            warmup_epochs=args.warmup_epochs,
-            total_epochs=args.epochs,
-            min_lr=args.min_lr,
-        ),
-        keras.callbacks.ModelCheckpoint(
-            filepath=os.path.join(args.checkpoint_dir, "best.weights.h5"),
-            monitor="val_gap_mae",
-            mode="min",
-            save_best_only=True,
-            save_weights_only=True,
-        ),
-        keras.callbacks.EarlyStopping(
-            monitor="val_gap_mae",
-            mode="min",
-            patience=20,
-            restore_best_weights=True,
-        ),
-        LearningRateLogger(),
-        keras.callbacks.CSVLogger(os.path.join(args.output_dir, "training_log.csv")),
-    ]
+    callbacks = build_supervised_callbacks(args)
 
     history = fit_or_restore_history(
         model=model,
@@ -1361,12 +1858,28 @@ def main() -> None:
         val_ds=val_ds,
         epochs=args.epochs,
         callbacks=callbacks,
+        selection_manifest=selection_manifest,
     )
     if args.evaluation_only:
         print(
             f"Evaluation-only resume: restored {os.path.join(args.checkpoint_dir, 'best.weights.h5')} "
             f"with {len(history.epoch)} recorded epochs"
         )
+    else:
+        selection_manifest = freeze_supervised_states(
+            model=model,
+            checkpoint_dir=args.checkpoint_dir,
+            accepted_model_path=args.model_path,
+            output_dir=args.output_dir,
+            history=history,
+        )
+        print(
+            "Frozen inner-selected best/last/accepted states; "
+            f"best epoch={selection_manifest['best_epoch_one_based']}"
+        )
+        if args.train_only:
+            print("Train-only complete: outer OOD arrays were not loaded")
+            return
 
     pred_train = model.predict(data["X_train"], verbose=0)
     pred_test = model.predict(data["X_test"], verbose=0)
@@ -1393,8 +1906,15 @@ def main() -> None:
         model,
         args.model_path,
         {
-            "encoder_path": args.encoder,
-            "norm_path": args.norm,
+            "experiment_id": args.experiment_id,
+            "source": args.source,
+            "tensor_npz": _portable_artifact_path(args.tensor_npz),
+            "encoder_path": _portable_artifact_path(args.encoder),
+            "norm_path": _portable_artifact_path(args.norm),
+            "inner_selection_manifest": _portable_artifact_path(
+                os.path.join(args.output_dir, "inner_selection_manifest.json")
+            ),
+            "checkpoint_monitor": "val_loss",
             "input_shape": list(data["X_train"].shape[1:]),
             "freeze_layers": args.freeze_layers,
             "head_learning_rate": args.learning_rate,
@@ -1404,6 +1924,7 @@ def main() -> None:
             "entropy_weight": args.entropy_weight,
             "extremum_weight": args.extremum_weight,
             "random_state": args.random_state,
+            "whole_path_augmentation_enabled": bool(args.augment),
             "class_weights": class_weights,
             "classification_loss": "CategoricalCrossentropy with class sample weights",
             "regression_target": "tensor_gap_ecbm_minus_evbm",
@@ -1415,6 +1936,7 @@ def main() -> None:
                 "type": "concat(pooled encoder, topology priors)->Dense->Dropout->Dense->Dense(3, softmax)",
             },
         },
+        save_weights=False,
     )
     write_finetune_strategy_report(
         os.path.join(args.output_dir, "finetune_strategy_summary.json"),
@@ -1478,15 +2000,24 @@ def main() -> None:
         recon_test_raw,
         data["material_ids_test"],
         os.path.join(args.output_dir, "curvature_zoom_examples_ood_test.png"),
+        segment_ids=data["segment_ids_test"],
     )
     save_latent_tsne(
         model,
         data,
         os.path.join(args.output_dir, "latent_tsne_spacegroups.png"),
     )
-    violation_info = physics_violation_stats(pred_test["gap"], recon_test_raw)
+    violation_info = physics_violation_stats(
+        pred_test["gap"],
+        recon_test_raw,
+        segment_ids=data["segment_ids_test"],
+    )
     recon_tensor_gap = tensor_gap_from_extrema(recon_test_raw)
-    validator_info = PhysicsValidator().validate(recon_tensor_gap, recon_test_raw)
+    validator_info = PhysicsValidator().validate(
+        recon_tensor_gap,
+        recon_test_raw,
+        segment_ids=data["segment_ids_test"],
+    )
     reconstruction_validator_info = {
         f"reconstruction_{key}": value for key, value in validator_info.items()
     }
@@ -1534,15 +2065,17 @@ def main() -> None:
     mc_summary = {
         "mc_samples": 50,
         "method": "dropout-as-Bayesian-approximation (Gal & Ghahramani 2016)",
-        "ci_coverage_95pct": mc_cal["ci_coverage_95pct"],
-        "ci_tolerance_ev": mc_cal["tolerance_ev"],
+        "raw_95_interval_coverage": mc_cal["raw_95_interval_coverage"],
+        "tolerance_augmented_coverage": mc_cal["tolerance_augmented_coverage"],
+        "tolerance_ev": mc_cal["tolerance_ev"],
         "mean_uncertainty_ev": mc_cal["mean_uncertainty_ev"],
         "median_uncertainty_ev": mc_cal["median_uncertainty_ev"],
         "max_uncertainty_ev": mc_cal["max_uncertainty_ev"],
     }
     print(f"  MC uncertainty: mean={mc_cal['mean_uncertainty_ev']:.4f} eV, "
           f"median={mc_cal['median_uncertainty_ev']:.4f} eV, "
-          f"CI coverage={mc_cal['ci_coverage_95pct']:.2%}")
+          f"raw 95% coverage={mc_cal['raw_95_interval_coverage']:.2%}, "
+          f"tolerance coverage={mc_cal['tolerance_augmented_coverage']:.2%}")
     # Save MC predictions
     mc_pred_path = os.path.join(args.output_dir, "mc_uncertainty_predictions.json")
     mc_payload = {
@@ -1576,13 +2109,52 @@ def main() -> None:
         data["groups_test"],
     )
 
+    analytic_gap = tensor_gap_from_extrema(data["X_test_raw"])
+    if not np.array_equal(
+        analytic_gap.astype(np.float32),
+        data["tensor_gap_test"].astype(np.float32),
+    ):
+        raise RuntimeError(
+            "Saved line-mode target does not equal the analytic input-tensor functional"
+        )
+    mismatch_material_ids = load_mismatch_material_ids(args.tensor_npz)
+    classification_scope = classification_scope_metrics(
+        data["type_test"],
+        pred_test["type"],
+        data["groups_test"],
+        data["material_ids_test"],
+        mismatch_material_ids=mismatch_material_ids,
+    )
+    report_date_token = args.report_date or datetime.now().strftime("%Y%m%d")
+    metrics_output_path = os.path.join(args.output_dir, "metrics_summary.json")
+    predictions_output_path = os.path.join(args.output_dir, "ood_test_predictions.json")
+    report_path = supervised_report_path(args.output_dir, report_date_token)
+    latest_report_path = os.path.join(args.output_dir, "latest_training_report.md")
+
     summary = {
+        "experiment_id": args.experiment_id,
+        "report_date": report_date_token,
+        "source": args.source,
+        "tensor_npz": _portable_artifact_path(args.tensor_npz),
         "train_metrics": train_metrics,
         "ood_test_metrics": test_metrics,
+        "classification_scope": classification_scope,
+        "gap_semantics": {
+            "target": "analytic line-mode tensor functional min(CBM_E)-max(VBM_E)",
+            "analytic_identity_baseline_mae_ev": float(
+                np.mean(np.abs(analytic_gap - data["tensor_gap_test"]))
+            ),
+            "analytic_identity_baseline_rmse_ev": float(
+                np.sqrt(np.mean((analytic_gap - data["tensor_gap_test"]) ** 2))
+            ),
+            "interpretation": "learned soft-extremum approximation, not independent DFT prediction",
+        },
         "epochs_ran": len(history.history["loss"]),
+        "best_inner_val_loss": float(np.min(history.history["val_loss"])),
         "best_inner_val_gap_mae": float(np.min(history.history["val_gap_mae"])),
-        "model_selection_data": "group-disjoint validation subset of outer training split",
-        "outer_ood_test_usage": "final evaluation only",
+        "checkpoint_monitor": "val_loss",
+        "model_selection_data": "complete group-disjoint validation subset of outer training split",
+        "outer_ood_test_usage": "loaded only after best/last/accepted checkpoint freeze",
         "freeze_layers": args.freeze_layers,
         "type_weight": args.type_weight,
         "learning_rate": args.learning_rate,
@@ -1592,6 +2164,7 @@ def main() -> None:
         "entropy_weight": args.entropy_weight,
         "extremum_weight": args.extremum_weight,
         "random_state": args.random_state,
+        "whole_path_augmentation_enabled": bool(args.augment),
         "class_weights": class_weights,
         "classification_loss": {
             "name": "CategoricalCrossentropy",
@@ -1611,29 +2184,42 @@ def main() -> None:
         "physics_violation_rates": violation_info,
         "mc_uncertainty": mc_summary,
         "outputs": {
-            "model": saved_model_outputs["weights"],
-            "model_artifacts": saved_model_outputs,
-            "best_weights": os.path.join(args.checkpoint_dir, "best.weights.h5"),
-            "training_curves": os.path.join(args.output_dir, "training_curves.png"),
-            "learning_rate_curve": os.path.join(args.output_dir, "learning_rate_curve.png"),
-            "parity_plot_ood_test": os.path.join(args.output_dir, "parity_plot_ood_test.png"),
-            "error_distribution_ood_test": os.path.join(args.output_dir, "error_distribution_ood_test.png"),
-            "confusion_matrix_ood_test": os.path.join(args.output_dir, "confusion_matrix_ood_test.png"),
-            "roc_curves_ood_test": os.path.join(args.output_dir, "roc_curves_ood_test.png"),
-            "extremum_probability_heatmaps_ood_test": os.path.join(args.output_dir, "extremum_probability_heatmaps_ood_test.png"),
-            "band_overlay_examples_ood_test": os.path.join(args.output_dir, "band_overlay_examples_ood_test.png"),
-            "curvature_zoom_examples_ood_test": os.path.join(args.output_dir, "curvature_zoom_examples_ood_test.png"),
-            "latent_tsne_spacegroups": os.path.join(args.output_dir, "latent_tsne_spacegroups.png"),
-            "physics_violation_rates_ood_test": os.path.join(args.output_dir, "physics_violation_rates_ood_test.png"),
-            "predictions": os.path.join(args.output_dir, "ood_test_predictions.json"),
-            "mc_uncertainty_predictions": os.path.join(args.output_dir, "mc_uncertainty_predictions.json"),
-            "finetune_strategy_summary": os.path.join(args.output_dir, "finetune_strategy_summary.json"),
+            "model": _portable_artifact_path(saved_model_outputs["weights"]),
+            "model_artifacts": {
+                key: _portable_artifact_path(value)
+                for key, value in saved_model_outputs.items()
+            },
+            "best_weights": _portable_artifact_path(
+                os.path.join(args.checkpoint_dir, "best.weights.h5")
+            ),
+            "last_weights": _portable_artifact_path(
+                os.path.join(args.checkpoint_dir, "last.weights.h5")
+            ),
+            "inner_selection_manifest": _portable_artifact_path(
+                os.path.join(args.output_dir, "inner_selection_manifest.json")
+            ),
+            "metrics": _portable_artifact_path(metrics_output_path),
+            "report": _portable_artifact_path(report_path),
+            "latest_report": _portable_artifact_path(latest_report_path),
+            "training_curves": _portable_artifact_path(os.path.join(args.output_dir, "training_curves.png")),
+            "learning_rate_curve": _portable_artifact_path(os.path.join(args.output_dir, "learning_rate_curve.png")),
+            "parity_plot_ood_test": _portable_artifact_path(os.path.join(args.output_dir, "parity_plot_ood_test.png")),
+            "error_distribution_ood_test": _portable_artifact_path(os.path.join(args.output_dir, "error_distribution_ood_test.png")),
+            "confusion_matrix_ood_test": _portable_artifact_path(os.path.join(args.output_dir, "confusion_matrix_ood_test.png")),
+            "roc_curves_ood_test": _portable_artifact_path(os.path.join(args.output_dir, "roc_curves_ood_test.png")),
+            "extremum_probability_heatmaps_ood_test": _portable_artifact_path(os.path.join(args.output_dir, "extremum_probability_heatmaps_ood_test.png")),
+            "band_overlay_examples_ood_test": _portable_artifact_path(os.path.join(args.output_dir, "band_overlay_examples_ood_test.png")),
+            "curvature_zoom_examples_ood_test": _portable_artifact_path(os.path.join(args.output_dir, "curvature_zoom_examples_ood_test.png")),
+            "latent_tsne_spacegroups": _portable_artifact_path(os.path.join(args.output_dir, "latent_tsne_spacegroups.png")),
+            "physics_violation_rates_ood_test": _portable_artifact_path(os.path.join(args.output_dir, "physics_violation_rates_ood_test.png")),
+            "predictions": _portable_artifact_path(predictions_output_path),
+            "mc_uncertainty_predictions": _portable_artifact_path(os.path.join(args.output_dir, "mc_uncertainty_predictions.json")),
+            "finetune_strategy_summary": _portable_artifact_path(os.path.join(args.output_dir, "finetune_strategy_summary.json")),
         },
     }
-    with open(os.path.join(args.output_dir, "metrics_summary.json"), "w", encoding="utf-8") as f:
+    with open(metrics_output_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
-    report_path = supervised_report_path(args.output_dir, args.report_date)
-    save_markdown_report(summary, report_path)
+    save_report_bundle(summary, args.output_dir, report_date_token)
 
     print("=" * 60)
     print("Fine-tuning complete")

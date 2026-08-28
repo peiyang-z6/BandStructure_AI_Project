@@ -98,15 +98,20 @@ def mc_dropout_predict_with_type(
     """Same as mc_dropout_predict but also returns type classification entropy."""
     if seed is not None:
         np.random.seed(seed)
+        keras.utils.set_random_seed(seed)
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
 
     n = X.shape[0]
     all_gaps = np.zeros((n_samples, n), dtype=np.float32)
     all_type_probs = np.zeros((n_samples, n, 3), dtype=np.float32)
 
-    for i in range(n_samples):
-        pred = model(X, training=True)
-        all_gaps[i] = np.asarray(pred["gap"]).ravel()
-        all_type_probs[i] = np.asarray(pred["type"])
+    for sample_index in range(n_samples):
+        for start in range(0, n, batch_size):
+            end = min(start + batch_size, n)
+            pred = model(X[start:end], training=True)
+            all_gaps[sample_index, start:end] = np.asarray(pred["gap"]).ravel()
+            all_type_probs[sample_index, start:end] = np.asarray(pred["type"])
 
     gap_mean = np.mean(all_gaps, axis=0)
     gap_std = np.std(all_gaps, axis=0, ddof=1)
@@ -140,16 +145,22 @@ def mc_calibration_check(
     mc_result: dict[str, np.ndarray],
     tolerance_ev: float = 0.1,
 ) -> dict:
-    """Check if true values fall within the MC 95% CI at a given tolerance."""
-    ci_low = mc_result["gap_ci95_low"] - tolerance_ev
-    ci_high = mc_result["gap_ci95_high"] + tolerance_ev
-    in_ci = (y_true >= ci_low) & (y_true <= ci_high)
-    coverage = np.mean(in_ci)
+    """Report raw 95% interval coverage separately from tolerance diagnostics."""
+    raw_low = mc_result["gap_ci95_low"]
+    raw_high = mc_result["gap_ci95_high"]
+    raw_in_interval = (y_true >= raw_low) & (y_true <= raw_high)
+    tolerance_in_interval = (
+        (y_true >= raw_low - tolerance_ev)
+        & (y_true <= raw_high + tolerance_ev)
+    )
 
     return {
         "mc_samples": mc_result["gap_samples"].shape[0],
-        "ci_coverage_95pct": float(coverage),
-        "tolerance_ev": tolerance_ev,
+        "raw_95_interval_coverage": float(np.mean(raw_in_interval)),
+        "tolerance_augmented_coverage": float(np.mean(tolerance_in_interval)),
+        # Backward compatibility only; new reports must use the explicit fields.
+        "ci_coverage_95pct": float(np.mean(tolerance_in_interval)),
+        "tolerance_ev": float(tolerance_ev),
         "mean_uncertainty_ev": float(np.mean(mc_result["gap_std"])),
         "median_uncertainty_ev": float(np.median(mc_result["gap_std"])),
         "max_uncertainty_ev": float(np.max(mc_result["gap_std"])),

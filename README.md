@@ -12,27 +12,45 @@
 
 后续经批准的扩展方向是**在现有链路上**增加 crystal graph → multi-band Eₙ(k)、DFT 质检/相似检索和不确定性主动学习，不建立并列冗余框架。
 
-## 30k 正式状态（任务日期 2026-08-25，跨午夜完成）
+## 当前状态（2026-08-27）
 
-最新已接受实验：`aflow_noleak_v5_30k_seed42`。30k immutable raw、no-leak tensor、GPU-only SSL/监督训练、outer OOD、回传哈希与本地模型 smoke 均已完成；完整报告：
+### v6 metric-fix：代码与本地 GPU smoke 已通过，正式服务器训练待执行
 
-`artifacts/reports/aflow_noleak_v5_30k_seed42/latest_training_report_20260825.md`
+新实验 ID：`aflow_noleak_v6_30k_seed42_metricfix`。本轮不下载、不重建、不覆盖 v4/v5，直接只读复用 immutable v5 30k raw/split。已完成的本地证据：
 
-| 项目 | v5 正式验收 |
+- 监督 epoch 指标改为完整 validation 聚合，canonical checkpoint 监控 aggregate `val_loss`；
+- 训练与 outer evaluation 拆为 `--train-only` → best/last/accepted SHA freeze → `--evaluation-only`；
+- SSL actual mask 强制在 15–30%，validation corruption 固定，epoch 指标按真实 denominator 加权；
+- 无物理 k-coordinate 的 curvature-magnitude consistency hard-disabled，whole-path strain heuristic 默认关闭；
+- 关键 tensor GPU placement fail-closed；
+- 本地 RTX 4060 的 1-epoch SSL 与监督 train/eval smoke 均通过，best/last/accepted、history、报告与 hash gate 齐全。
+
+正式 V100 结果尚未产生，因此本节不预填 v6 指标。
+
+### v5 30k：字节完整，但 checkpoint-selection 已被审计判定无效
+
+`aflow_noleak_v5_30k_seed42` 的 raw/tensor/model/predictions SHA-256 和模型加载仍全部通过；但是旧自定义 `train_step/test_step` 只把最后一个 validation batch 写入 epoch 日志，epoch 52 实际只代表最后 20 条 validation 样本。因此 v5 保留为 **immutable historical run with invalid checkpoint selection**，不能再作为无保留的科学 latest accepted。
+
+磁盘 predictions 的真实重算结果：
+
+| 项目 | v5 审计真值 |
 |---|---:|
 | AFLOW raw HDF5 / raw JSON | 30,000 / 30,000 |
-| Raw HDF5 SHA-256 | `d9927f0425de6232a24b8cea2eb8d0c5820e0aa9e29222b7feb621ebc7be08f3` |
 | 有效 no-leak 张量 | 29,952（跳过 48） |
 | Outer train/test | 23,933 / 6,019 |
 | Train/test space groups / overlap | 161 / 45 / **0** |
-| SSL best / stopped | epoch 39 / 54 |
-| Supervised inner best / completed | epoch 52 / 60 |
-| Outer line-mode gap MAE / RMSE | **0.000352 / 0.000595 eV** |
+| SSL best / stopped（历史日志事实） | epoch 39 / 54 |
+| SSL val masked MSE / MAE（标准化 6D） | 0.384270 / 0.156710 |
+| Supervised reported best / completed | epoch 52 / 60（**selection invalid**） |
+| Outer learned line-mode MAE / RMSE | **0.000352 / 0.001864 eV** |
+| Analytic line-mode identity baseline MAE / RMSE | **0 / 0 eV** |
 | Outer model-vs-global-DFT gap MAE | **0.640281 eV** |
-| Type accuracy / Macro F1 | **0.941186 / 0.932648** |
-| GPU evidence | Tesla V100；max 89%；15,114 MiB；无 CPU fallback |
+| Type accuracy / Macro F1 | **0.947333 / 0.932648** |
+| Spacegroup-macro accuracy | **0.939857** |
 
-v5 raw 位于 `data/raw/aflow/snapshots/aflow_30000_20260825/`。历史 v4 6,443 byte-identical raw、张量和训练 artifacts 全部保留为可复现基线，未被覆盖。
+这一 gap target 是输入 E(k) 的解析函数 `min(CBM_E)-max(VBM_E)`；模型数值只能称为 learned soft-extremum approximation，不能称为未知结构或 DFT replacement 的预测精度。v5 完整审计见 `PROJECT_BRAIN/agent_logs/20260827_training_result_reaudit_and_retrain_plan.md`，61 文件 retrospective manifest 见 `PROJECT_BRAIN/transfer_manifests/v5_consolidated_artifact_inventory_20260827.json`。
+
+v5 raw 位于 `data/raw/aflow/snapshots/aflow_30000_20260825/`。历史 v4 6,443 raw、张量和训练 artifacts 保留；v4 model-brain manifest 时间戳重生成 incident 已单独记录，未影响 v4 raw/tensor/model/checkpoint/predictions。
 
 ## 未来下载任务可靠性治理（2026-08-26）
 
@@ -109,8 +127,9 @@ BandStructure_AI_Project/
 │           ├── ood_tensors/                 # 历史正式 noleak_v4 张量
 │           └── ood_tensors_v5_30000_seed42/ # v5 29,952 no-leak 张量
 ├── artifacts/
-│   ├── {models,checkpoints,reports,logs}/aflow_noleak_v5_30k_seed42/ # latest accepted GPU-only v5
-│   └── {models,checkpoints,reports,logs}/aflow_noleak_v4_seed42/     # retained baseline
+│   ├── {models,checkpoints,reports,logs}/aflow_noleak_v6_30k_seed42_metricfix/ # 新版本正式输出（训练前为空）
+│   ├── {models,checkpoints,reports,logs}/aflow_noleak_v5_30k_seed42/           # immutable historical v5
+│   └── {models,checkpoints,reports,logs}/aflow_noleak_v4_seed42/               # retained baseline
 ├── configs/
 ├── scripts/
 ├── src/
@@ -129,9 +148,9 @@ BandStructure_AI_Project/
 
 ## 项目结构图与运行流程图
 
-- 详细项目结构图：`PROJECT_BRAIN/diagrams/project_structure_diagram_20260824.html`
-- 详细运行流程图：`PROJECT_BRAIN/diagrams/runtime_flow_diagram_20260824.html`
-- 图示说明：`PROJECT_BRAIN/diagrams/README.md`
+- 当前项目结构图：`PROJECT_BRAIN/diagrams/project_structure_diagram_20260827.html`
+- 当前端到端流程图：`PROJECT_BRAIN/diagrams/runtime_flow_diagram_20260827.html`
+- 2026-08-24 v4 图保留为 historical snapshot；图示说明：`PROJECT_BRAIN/diagrams/README.md`
 
 两张图均为静态、可缩放、离线可打开的 HTML/SVG。
 
@@ -187,7 +206,28 @@ python -m pytest -q
 CUDA_VISIBLE_DEVICES='' python tests/smoke_latest_model.py
 ```
 
-`scripts/run_full_pipeline.py --source aflow` 保留为 v4 复现实验入口，不是 v5 latest 状态命令。v4/v5 都是 immutable snapshot；继续扩容必须先建立新的 snapshot/experiment ID，不得向二者原地追加。
+`scripts/run_full_pipeline.py --source aflow` 保留为 v4 复现实验入口，不是 v6 正式命令。v4/v5 都是 immutable snapshot；继续训练必须显式给出新的 experiment ID 与只读输入。
+
+### v6 GPU-only 正式命令
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python scripts/run_full_pipeline.py \
+  --source aflow \
+  --experiment-id aflow_noleak_v6_30k_seed42_metricfix \
+  --raw-h5 data/raw/aflow/snapshots/aflow_30000_20260825/aflow_bands.h5 \
+  --ood-dir data/processed/aflow/ood_tensors_v5_30000_seed42 \
+  --target 30000 \
+  --report-date 20260827 \
+  --ssl-epochs 60 --ssl-batch-size 32 \
+  --mask-ratio 0.25 --sign-weight 2.0 --consistency-weight 0.0 \
+  --finetune-epochs 60 --finetune-batch-size 32 \
+  --learning-rate 0.001 --encoder-learning-rate 0.00001 \
+  --type-weight 2.0 --freeze-layers 2 \
+  --topology-weight 0.3 --entropy-weight 0.02 --extremum-weight 1.0 \
+  --fresh --force-ssl --force-finetune --skip-vision --require-gpu
+```
+
+该命令不得在 CPU 或未通过 Conv1D GPU forward/backward preflight 的环境运行。
 
 ### 重现 v4 基线张量（仅复现，不改 v5）
 
@@ -220,12 +260,13 @@ Materials Project 密钥只允许放在未跟踪文件 `configs/api_keys.env`。
 
 ## 当前科学边界
 
-1. 当前正式模型以已计算 E(k) 为输入，是能带分析/表征模型，不是未知晶体结构→完整能带预测器。
-2. v5 的 0.000352 eV 是 line-mode tensor-gap MAE；对应 model-vs-global-DFT gap MAE 为 0.640281 eV，均不是实验带隙误差。
-3. 当前是单 seed=42，尚缺 3-seed 均值/方差。
-4. space-group OOD 不等于 composition/prototype/source OOD；v5 composition overlap=1,474。
-5. v5 direct-gap recall=0.943662；仍需用多 seed 和更多 OOD 维度确认稳定性。
-6. MC-dropout coverage 尚未做严格 calibration，暂不能直接驱动高成本 DFT 队列。
+1. 当前正式方向仍以已计算 E(k) 为输入，是能带分析/表征模型，不是未知晶体结构→完整能带或 DFT replacement。
+2. line-mode gap target 是输入函数；解析 baseline MAE/RMSE 为 0，learned gap head 的误差只衡量 soft-extremum approximation。
+3. v5 checkpoint selection 因 last-batch metric 无效；v6 正式 V100 结果尚未产生。
+4. 当前只有 seed=42；3-seed 均值/方差与 group-bootstrap 仍待后续日程。
+5. 当前 outer 是 space-group-disjoint OOD，不是 composition/prototype/source OOD。
+6. provider-metal/line-mode feature mismatch 在 v5 outer 为 1,257/6,019；报告必须给出 mismatch 分层性能。
+7. MC-dropout 必须同时报告 raw 95% interval coverage 与 tolerance diagnostic；后者不能称为校准置信区间。
 
 ## 不可破坏约束
 
