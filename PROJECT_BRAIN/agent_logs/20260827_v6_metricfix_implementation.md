@@ -23,6 +23,8 @@ User approved the revised complete plan with these decisions:
 
 - branch: `v6-metricfix-20260827`
 - pre-v6 audited snapshot: `025d5ce`
+- verified metric-fix code: `7126056230a204cdd71d915b3a1db7be5ec4e2a7`
+- code tag: `v6-metricfix-code-20260827`
 - pre-snapshot regression: `92 passed in 414.21s`
 - secret gate: staged host/password/private-key matches = 0
 - actual `configs/api_keys.env`, raw/processed data, and trained artifacts remained ignored/uncommitted
@@ -79,9 +81,9 @@ User approved the revised complete plan with these decisions:
 
 ## Local verification completed
 
-- Final Stage-0: `116 passed in 27.39s`.
+- Final Stage-0: `116 passed in 29.22s`.
 - Final local compileall: exit 0.
-- Final local full pytest: `134 passed in 225.90s`.
+- Final local full pytest: `134 passed in 225.64s`.
 - Immutable v4/v5 raw/tensor/model/prediction SHA-256 values all matched frozen baselines.
 - Real `run_full_pipeline.py --source aflow --status-only` no-write probe preserved v4 manifest SHA `91a7b2...a32c`.
 - Local supervised 1-epoch GPU smoke on RTX 4060:
@@ -130,12 +132,10 @@ Delegation-provider retries failed to return a parseable second verdict due prov
 
 ## Pending gates
 
-1. Independent pre-commit reviewer verdict and final staged diff/security scan.
-2. Metric-fix canonical commit/tag.
-3. Manifest-driven core sync, remote readback and remote tests.
-4. Remote 1-epoch SSL/supervised smoke.
-5. Full V100 SSL + supervised train-only + evaluation-only.
-6. Result archive return, local metrics recomputation/model load/hash acceptance.
-7. Final README/dev_context/constitution/training report/schedule closure.
+1. Manifest-driven core sync, remote readback and remote tests.
+2. Remote 1-epoch SSL/supervised smoke.
+3. Full V100 SSL + supervised train-only + evaluation-only.
+4. Result archive return, local metrics recomputation/model load/hash acceptance.
+5. Final README/dev_context/constitution/training report/schedule closure.
 
 No v6 formal metric is claimed before these gates complete.

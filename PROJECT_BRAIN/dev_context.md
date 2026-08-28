@@ -4,6 +4,8 @@ Last updated: 2026-08-27
 Current root: `C:\Users\PeiYang\Documents\AI Project\BandStructure AI Project\BandStructure_AI_Project`
 Branch: `v6-metricfix-20260827`
 Pre-v6 audited snapshot commit: `025d5ce`
+Verified metric-fix code commit: `7126056230a204cdd71d915b3a1db7be5ec4e2a7`
+Verified code tag: `v6-metricfix-code-20260827`
 
 ## Current State
 
@@ -114,8 +116,8 @@ v6 只读复用上述输入；`--fresh` 和 downloader/tensor builder 均不得�
 ## Local Verification So Far
 
 - pre-v6 baseline：`92 passed in 414.21s`；
-- 修复后 Stage-0：`116 passed in 27.39s`；
-- 最新完整 WSL compileall + pytest：compileall exit 0；`134 passed in 225.90s`；
+- 修复后 Stage-0：`116 passed in 29.22s`；
+- 最新完整 WSL compileall + pytest：compileall exit 0；`134 passed in 225.64s`；
 - local supervised smoke：1 epoch on RTX 4060，aggregate metrics、best/last/accepted、train-only outer isolation 全通过；
 - local evaluation-only smoke：selection hash gate、64 outer samples、MC/report/plots、accepted hash unchanged 全通过；
 - local SSL smoke：1 epoch，val actual mask≈0.25015、symmetry weight=0、best/last/history/model 全通过；
