@@ -12,20 +12,36 @@
 
 后续经批准的扩展方向是**在现有链路上**增加 crystal graph → multi-band Eₙ(k)、DFT 质检/相似检索和不确定性主动学习，不建立并列冗余框架。
 
-## 当前状态（2026-08-27）
+## 当前状态（2026-08-28 最终验收）
 
-### v6 metric-fix：代码与本地 GPU smoke 已通过，正式服务器训练待执行
+### v6 metric-fix：已正式验收为 latest accepted
 
-新实验 ID：`aflow_noleak_v6_30k_seed42_metricfix`。本轮不下载、不重建、不覆盖 v4/v5，直接只读复用 immutable v5 30k raw/split。已完成的本地证据：
+新实验：`aflow_noleak_v6_30k_seed42_metricfix`。GPU-only 在服务器 Tesla V100 完成 60 epochs SSL + 60 epochs 监督训练；修复后的最终 gate 通过，model-brain manifest 已发布，产物已回传并逐文件哈希校验、本地模型加载/前向通过。
 
-- 监督 epoch 指标改为完整 validation 聚合，canonical checkpoint 监控 aggregate `val_loss`；
-- 训练与 outer evaluation 拆为 `--train-only` → best/last/accepted SHA freeze → `--evaluation-only`；
-- SSL actual mask 强制在 15–30%，validation corruption 固定，epoch 指标按真实 denominator 加权；
-- 无物理 k-coordinate 的 curvature-magnitude consistency hard-disabled，whole-path strain heuristic 默认关闭；
-- 关键 tensor GPU placement fail-closed；
-- 本地 RTX 4060 的 1-epoch SSL 与监督 train/eval smoke 均通过，best/last/accepted、history、报告与 hash gate 齐全。
+| 项目 | v6 正式值（6,019 outer，独立重算） |
+|---|---:|
+| learned line-mode MAE / RMSE | **0.000407 / 0.007109 eV** |
+| analytic identity baseline MAE / RMSE | **0 / 0 eV** |
+| tensor vs global DFT MAE | 0.640224 eV |
+| model vs global DFT MAE | 0.640244 eV |
+| line-mode approximation R² | 0.999984 |
+| type accuracy | **0.958797** |
+| Macro F1 | **0.949251** |
+| spacegroup-macro accuracy | **0.965795** |
+| feature/label mismatch accuracy (1,257) | 0.830549 |
+| MC raw 95% coverage | 0.803954 |
+| selection | aggregate inner `val_loss`；best epoch 47 |
+| SSL | 60 epochs，best epoch 49，val mask fraction 0.248 |
 
-正式 V100 结果尚未产生，因此本节不预填 v6 指标。
+关键修复已落地并被 TDD 锁定：
+
+- 监督 epoch 指标为完整 inner validation 聚合；`val_loss` canonical checkpoint 选择；`best/last/accepted` 三态 SHA 冻结后才允许 outer 评估；
+- SSL actual mask 强制 15–30%，validation corruption 固定；magnitude-consistency hard-disabled；
+- 报告日期/来源/路径全部运行时生成；MC raw/tolerance coverage 分开；
+- pipeline 显式 `--experiment-id/--raw-h5/--ood-dir/--report-date`，v6 不覆盖 v4/v5；
+- r3：`src/utils/selection_manifest.py` 轻量校验器（无 TensorFlow 依赖）；r4：入口脚本将项目根加入 `sys.path`（`python scripts/run_full_pipeline.py` 直接启动不再被 `scripts` 命名遮蔽）。
+
+完整报告：`artifacts/reports/aflow_noleak_v6_30k_seed42_metricfix/v6_final_training_report.md`；回传归档 52 files / 74,071,297 bytes / SHA-256 `6735d815951b8081c114c11055ab8c5e122f1cc3ca466d0fc25c3145ef0a8184`。验收清单：`PROJECT_BRAIN/transfer_manifests/local_final_acceptance_v6_20260828.json`。
 
 ### v5 30k：字节完整，但 checkpoint-selection 已被审计判定无效
 

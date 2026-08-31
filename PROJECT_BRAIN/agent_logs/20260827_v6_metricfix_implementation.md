@@ -147,12 +147,13 @@ Delegation-provider retries failed to return a parseable second verdict due prov
 - r3 fix (commit `bb66e6b1b6667aebf577bfef8043042de7a46cde`, tag `v6-metricfix-sync-r3-20260828`): `src/utils/selection_manifest.py` holds the lightweight (no TensorFlow) selection-manifest validator; both the pipeline and the finetune CLI reference it, so the pipeline no longer imports the `scripts` package at the final gate. Local evidence: Stage-0 `117 passed in 26.06s`, full WSL `135 passed in 211.56s`.
 - Remaining remote steps are purely mechanical once connectivity returns: apply r3 core archive, rerun remote compile/pytest, then rerun the pipeline WITHOUT `--fresh/--force-*` so training stages skip and only the final gate + model-brain manifest complete.
 
-## Pending gates
+## Final acceptance
 
-1. Manifest-driven core sync, remote readback and remote tests.
-2. Remote 1-epoch SSL/supervised smoke.
-3. Full V100 SSL + supervised train-only + evaluation-only.
-4. Result archive return, local metrics recomputation/model load/hash acceptance.
-5. Final README/dev_context/constitution/training report/schedule closure.
-
-No v6 formal metric is claimed before these gates complete.
+- r4 sync: 137 files, post-apply mismatches=0；remote full pytest `136 passed in 37.85s`。
+- Idempotent finalize completed the final artifact gate and model-brain manifest (`Pipeline complete`) without rerunning training.
+- Return archive: `band_v6_results_20260828.tar.gz`, 52 files, 74,071,297 bytes, SHA-256 `6735d815951b8081c114c11055ab8c5e122f1cc3ca466d0fc25c3145ef0a8184`; every member verified byte-for-byte.
+- Local recompute of all 6,019 outer rows matches `metrics_summary.json`: learned line-mode MAE/RMSE `0.000407/0.007109 eV`, type accuracy `0.958797`, Macro F1 `0.949251`, spacegroup-macro `0.965795`, mismatch accuracy `0.830549`, MC raw 95% coverage `0.803954`.
+- Local model load + finite forward passed; SSL reconstruction shape `[1,128,6]`; selection manifest `val_loss`, best epoch 47, outer not accessed.
+- v4/v5 immutable SHA-256 unchanged.
+- `aflow_noleak_v6_30k_seed42_metricfix` promoted to latest accepted; v5 retained as immutable historical run with checkpoint-selection caveat; v4 baseline untouched.
+- Final docs: README, dev_context, CONSTITUTION v4.10, `v6_final_training_report.md`, `local_final_acceptance_v6_20260828.json`, dated schedule `20260828_next_work_schedule.md`.

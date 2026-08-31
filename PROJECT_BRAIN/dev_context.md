@@ -1,11 +1,11 @@
 # BandStructure AI Project — Dev Context
 
-Last updated: 2026-08-27
+Last updated: 2026-08-28
 Current root: `C:\Users\PeiYang\Documents\AI Project\BandStructure AI Project\BandStructure_AI_Project`
 Branch: `v6-metricfix-20260827`
 Pre-v6 audited snapshot commit: `025d5ce`
-Verified metric-fix code commit: `7126056230a204cdd71d915b3a1db7be5ec4e2a7`
-Verified code tag: `v6-metricfix-code-20260827`
+Verified metric-fix code commit: `3c00aef4468a617a5bceec5b7262037d025baa63`
+Code tags: `v6-metricfix-code-20260827`, `v6-metricfix-sync-20260828`, `v6-metricfix-sync-r2-20260828`, `v6-metricfix-sync-r3-20260828`, `v6-metricfix-sync-r4-20260828`
 
 ## Current State
 
@@ -19,7 +19,9 @@ Verified code tag: `v6-metricfix-code-20260827`
   → tkinter Plot-to-Physics
 ```
 
-当前正在执行经批准的 `aflow_noleak_v6_30k_seed42_metricfix`。代码修复、结构图/流程图、本地 RTX 4060 SSL smoke 和监督 `train-only → evaluation-only` smoke 已通过；服务器 V100 正式训练尚未启动，不能预填 v6 指标。
+`aflow_noleak_v6_30k_seed42_metricfix` 已正式验收为 **latest accepted**：服务器 Tesla V100 GPU-only 完成 SSL 60 epochs + 监督 60 epochs（canonical aggregate `val_loss` best epoch 47），最终 artifact gate 与 model-brain manifest 已通过；产物回传（52 files / 74,071,297 bytes / SHA-256 `6735d815951b8081c114c11055ab8c5e122f1cc3ca466d0fc25c3145ef0a8184`）逐成员哈希匹配，本地模型加载/前向有限、概率和为 1，selection manifest 校验通过。
+
+v6 正式指标（6,019 outer，独立重算）：learned line-mode MAE/RMSE `0.000407/0.007109 eV`（解析 baseline 0/0）、model-vs-global-DFT MAE `0.640244 eV`、type accuracy `0.958797`、Macro F1 `0.949251`、spacegroup-macro `0.965795`、mismatch accuracy `0.830549`、MC raw 95% coverage `0.803954`。
 
 ## Why v6 Is Required
 
@@ -116,8 +118,8 @@ v6 只读复用上述输入；`--fresh` 和 downloader/tensor builder 均不得�
 ## Local Verification So Far
 
 - pre-v6 baseline：`92 passed in 414.21s`；
-- 修复后 Stage-0：`116 passed in 27.64s`；
-- 最新完整 WSL compileall + pytest：compileall exit 0；`134 passed in 227.52s`；
+- 修复后 Stage-0：`118 passed in 26.13s`；
+- 最新完整 WSL compileall + pytest：compileall exit 0；`136 passed in 197.67s`；
 - local supervised smoke：1 epoch on RTX 4060，aggregate metrics、best/last/accepted、train-only outer isolation 全通过；
 - local evaluation-only smoke：selection hash gate、64 outer samples、MC/report/plots、accepted hash unchanged 全通过；
 - local SSL smoke：1 epoch，val actual mask≈0.25015、symmetry weight=0、best/last/history/model 全通过；

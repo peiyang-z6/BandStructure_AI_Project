@@ -1,7 +1,7 @@
 # BandStructure AI Project Constitution
 
-Version: 4.9
-Updated: 2026-08-27
+Version: 4.10
+Updated: 2026-08-28
 Status: active project rules
 
 ## 1. Mission
@@ -49,7 +49,7 @@ BandStructure_AI_Project/
 └── PROJECT_BRAIN/
 ```
 
-- `aflow_noleak_v5_30k_seed42` 保留为 immutable historical run；2026-08-27 审计确认其 supervised checkpoint selection 只代表最后 20 条 validation 样本，不能继续作为无保留的科学 latest accepted。`aflow_noleak_v6_30k_seed42_metricfix` 在完成服务器 GPU 训练、回传和本地验收前只能称 candidate；`aflow_noleak_v4_seed42` 继续作为 immutable baseline。
+- `aflow_noleak_v6_30k_seed42_metricfix` 为 latest accepted（GPU-only、aggregate `val_loss` 选模、best/last/accepted 三态冻结、最终 content gate + model-brain manifest 通过）。`aflow_noleak_v5_30k_seed42` 保留为 immutable historical run；2026-08-27 审计确认其 supervised checkpoint selection 只代表最后 20 条 validation 样本，不能继续作为无保留的科学 latest accepted。`aflow_noleak_v4_seed42` 继续作为 immutable baseline。
 - 不重新创建根级 `data_cache/`、`models/`、`checkpoints/`、`reports/` 或 `logs/`。
 - `src` 的现有责任边界优先于新建平行模块；入口脚本保持稳定，确需移动时必须先加路径回归测试。
 - 临时文件、远程连接脚本、`__pycache__`、`.pytest_cache`、下载归档和迁移 quarantine 不得留在最终运行根目录。
@@ -133,6 +133,8 @@ flattened input: (N, seq_len, 6)
 冒烟只能验证可运行性，不得作为科研精度结论。监督物理分数与 SSL reconstruction 物理分数必须分开报告。正式分类报告至少包含 sample-weighted、group-macro 和 provider/feature mismatch strata；MC uncertainty 必须分开 raw interval coverage 与 tolerance diagnostic，后者不得命名为校准置信区间。
 
 正式训练至少保留：数据/代码 manifest、配置、best/last/accepted 状态、完整日志、预测、最终 metrics 与 artifact SHA-256。
+
+pipeline 入口合同：`scripts/run_full_pipeline.py` 必须以脚本方式直接可启动（项目根在 `sys.path`）；最终 artifact 校验必须引用无 TensorFlow 依赖的轻量模块（`src/utils/selection_manifest.py`），不得在 gate 处动态导入训练脚本或依赖同名的第三方 `scripts` 包；evaluation-only 必须先恢复 frozen best 再 `compile(jit_compile=False)`。
 
 ## 8. Phase C Extension Rules
 
