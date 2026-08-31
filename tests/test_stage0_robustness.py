@@ -342,6 +342,29 @@ class Stage0RobustnessTest(unittest.TestCase):
         self.assertEqual(result["last_epoch"], 1)
         self.assertEqual(result["best_epoch"], 1)
 
+    def test_pipeline_module_makes_project_src_importable(self):
+        import subprocess
+        import sys
+
+        root = Path(__file__).resolve().parents[1]
+        code = (
+            "import sys, runpy, pathlib\n"
+            f"root = pathlib.Path({str(root)!r})\n"
+            "sys.path[:] = [p for p in sys.path if p not in ('',) and str(root) not in p]\n"
+            "runpy.run_path(str(root / 'scripts' / 'run_full_pipeline.py'), run_name='_rpl_probe')\n"
+            "import src.utils.selection_manifest\n"
+            "print('SRC_IMPORTABLE')\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            cwd=str(root),
+            timeout=180,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr[-3000:])
+        self.assertIn("SRC_IMPORTABLE", result.stdout)
+
     def test_pipeline_content_gate_uses_lightweight_selection_validator(self):
         import types
 
