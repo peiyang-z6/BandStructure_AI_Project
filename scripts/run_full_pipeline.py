@@ -552,12 +552,10 @@ def validate_versioned_artifact_content(
     paths: Dict[str, str],
 ) -> Dict[str, object]:
     """Validate selection hashes and SSL history/checkpoint consistency."""
-    from scripts import finetune_supervised
+    from src.utils.selection_manifest import validate_inner_selection_manifest
 
     report_dir = rel(paths["finetune_report_dir"])
-    selection = finetune_supervised.validate_inner_selection_manifest(
-        str(report_dir)
-    )
+    selection = validate_inner_selection_manifest(str(report_dir))
     history_path = rel(f'{paths["ssl_log_dir"]}/ssl_history.json')
     with open(history_path, "r", encoding="utf-8") as handle:
         history = json.load(handle)

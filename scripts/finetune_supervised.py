@@ -42,6 +42,11 @@ from src.engine.finetune_trainer import (
 )
 from src.utils import assert_tensor_on_gpu
 from src.utils.physics_validator import PhysicsValidator, local_curvature
+from src.utils.selection_manifest import (
+    manifest_state_path,
+    sha256_file,
+    validate_inner_selection_manifest as _validate_inner_selection_manifest,
+)
 from src.utils.mc_dropout import mc_dropout_predict_with_type, mc_calibration_check
 from src.utils.visualizer import save_band_overlay_grid
 from src.data.band_structure_dataset import VirtualStrainAugmentation
@@ -810,11 +815,7 @@ def build_supervised_callbacks(args: argparse.Namespace):
 
 
 def _sha256_file(path: str | os.PathLike[str]) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
-        for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return sha256_file(path)
 
 
 def _portable_artifact_path(path: str | os.PathLike[str]) -> str:
@@ -892,51 +893,11 @@ def freeze_supervised_states(
 
 
 def _manifest_state_path(manifest: Dict[str, object], label: str) -> Path:
-    states = manifest.get("states")
-    if not isinstance(states, dict) or not isinstance(states.get(label), dict):
-        raise RuntimeError(f"Inner selection manifest missing {label} state")
-    path = Path(str(states[label].get("path", "")))
-    if not path.is_absolute():
-        path = Path.cwd() / path
-    return path.resolve()
+    return manifest_state_path(manifest, label)
 
 
 def validate_inner_selection_manifest(output_dir: str) -> Dict[str, object]:
-    """Fail closed before outer evaluation unless all frozen states still match."""
-    manifest_path = Path(output_dir) / "inner_selection_manifest.json"
-    if not manifest_path.is_file():
-        raise FileNotFoundError(
-            f"Missing inner selection manifest before outer evaluation: {manifest_path}"
-        )
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if manifest.get("outer_test_accessed") is not False:
-        raise RuntimeError("Inner selection manifest is not blind to outer test")
-    if manifest.get("monitor") != "val_loss":
-        raise RuntimeError("Inner selection manifest does not use aggregate val_loss")
-    states = manifest.get("states")
-    if not isinstance(states, dict):
-        raise RuntimeError("Inner selection manifest has no frozen states")
-    resolved_state_paths = []
-    for label in ("best", "last", "accepted"):
-        item = states.get(label)
-        if not isinstance(item, dict):
-            raise RuntimeError(f"Inner selection manifest missing {label} state")
-        path = _manifest_state_path(manifest, label)
-        resolved_state_paths.append(path)
-        if not path.is_file():
-            raise RuntimeError(f"Frozen {label} state is missing: {path}")
-        actual_hash = _sha256_file(path)
-        if actual_hash != item.get("sha256"):
-            raise RuntimeError(
-                f"Frozen {label} state hash mismatch: {actual_hash} != {item.get('sha256')}"
-            )
-        if path.stat().st_size != int(item.get("bytes", -1)):
-            raise RuntimeError(f"Frozen {label} state size mismatch: {path}")
-    if len(set(resolved_state_paths)) != 3:
-        raise RuntimeError(
-            "Frozen supervised best, last, and accepted paths are not distinct"
-        )
-    return manifest
+    return _validate_inner_selection_manifest(output_dir)
 
 
 def classification_scope_metrics(

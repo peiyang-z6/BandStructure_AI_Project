@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "cleaned_at_utc": "2026-08-28T16:04:46.402660+00:00",
+  "reason": "duplicate launch caused by retrying a timed-out detached launch command",
+  "detection": "two concurrent driver/pipeline/train_ssl process chains targeting the same v6 directories",
+  "cleanup_history": "the first cleanup terminated the formal payload chains but its audit command matched its own process; a corrected self-excluding pass later verified zero trainers and removed all partial v6 outputs",
+  "remaining_trainers": [],
+  "partial_v6_artifacts_removed": true,
+  "v4_v5_untouched": true,
+  "failed_run_backup_path": ".bandstructure_failed_runs/v6_duplicate_launch_20260828.tar.gz",
+  "backup_caveat": "subsequent idempotent cleanup passes may have overwritten this archive; session/process evidence is the authoritative failure trace",
+  "relaunch_control": "remote Python Popen(start_new_session=True) plus flock; detached launch command is never retried"
+}

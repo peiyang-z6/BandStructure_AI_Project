@@ -342,9 +342,75 @@ class Stage0RobustnessTest(unittest.TestCase):
         self.assertEqual(result["last_epoch"], 1)
         self.assertEqual(result["best_epoch"], 1)
 
+    def test_pipeline_content_gate_uses_lightweight_selection_validator(self):
+        import types
+
+        from scripts import run_full_pipeline
+        from src.utils import selection_manifest
+
+        shadow = types.ModuleType("scripts")
+        self.assertNotIn("finetune_supervised", run_full_pipeline.__dict__)
+        with patch.dict(sys.modules, {"scripts": shadow}):
+            with patch.object(
+                selection_manifest,
+                "validate_inner_selection_manifest",
+                return_value={"monitor": "val_loss"},
+            ) as validator:
+                from scripts.run_full_pipeline import (
+                    validate_versioned_artifact_content,
+                )
+
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    (root / "logs/ssl").mkdir(parents=True)
+                    (root / "logs/ssl/ssl_history.json").write_text(
+                        json.dumps(
+                            {
+                                "selection_monitor": "val_total",
+                                "epochs": [
+                                    {
+                                        "epoch": 1,
+                                        "val": {"total": 1.0, "mask_fraction": 0.25},
+                                        "selection_weights": {
+                                            "curvature": 0.5,
+                                            "symmetry": 0.0,
+                                        },
+                                        "post_adaptation_weights": {
+                                            "curvature": 0.5,
+                                            "symmetry": 0.0,
+                                        },
+                                        "improved": True,
+                                    }
+                                ],
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+                    with patch.object(
+                        run_full_pipeline,
+                        "rel",
+                        side_effect=lambda path: root / path,
+                    ), patch.object(
+                        run_full_pipeline,
+                        "read_checkpoint_epoch",
+                        side_effect=[1, 1],
+                    ):
+                        validate_versioned_artifact_content(
+                            types.SimpleNamespace(consistency_weight=0.0),
+                            {
+                                "finetune_report_dir": "reports",
+                                "ssl_log_dir": "logs/ssl",
+                                "ssl_checkpoint_dir": "checkpoints/ssl",
+                            },
+                        )
+
+        validator.assert_called_once_with(str(root / "reports"))
+
     def test_versioned_artifact_content_gate_validates_selection_and_ssl_epochs(self):
         from types import SimpleNamespace
-        from scripts import finetune_supervised, run_full_pipeline
+
+        from scripts import run_full_pipeline
+        from src.utils import selection_manifest
 
         history = {
             "selection_monitor": "val_total",
@@ -376,7 +442,7 @@ class Stage0RobustnessTest(unittest.TestCase):
                 "rel",
                 side_effect=lambda path: root / path,
             ), patch.object(
-                finetune_supervised,
+                selection_manifest,
                 "validate_inner_selection_manifest",
                 return_value={"monitor": "val_loss"},
             ) as selection_gate, patch.object(
