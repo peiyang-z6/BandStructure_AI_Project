@@ -131,13 +131,21 @@ The first independent logic review returned `passed=false`. Every reported/repro
 Delegation-provider retries failed to return a parseable second verdict due provider/network failures. A separate local Codex CLI read-only review of the **current working tree** independently marked these nine core gates verified: explicit input containment, immutable cleanup, distinct supervised states, manifest hash/size validation, manifest-bound evaluation, one-based supervised best epoch, SSL best epoch before checkpoint save, nonempty regular files, and content gate before manifest publication. Its only warning was missing programmatic source allowlisting; that warning was then fixed through RED→GREEN. Codex could not run tests in its pyenv, so WSL project tests remain the execution authority.
 
 ## Remote synchronization and V100 smoke corrective action
-
 - Applied core archive tag `v6-metricfix-sync-20260828`, commit `7cbd3541ee6fc797097660aea029d2ad45221dd3`.
 - Archive SHA-256 `62c8422fd4ba633a3c59bd60956abc19ac6cb74f6056fca1998dcd15b4b7e684`; 127 file hashes verified before and after apply; secrets excluded; v5 artifacts not overwritten.
 - Historical server cleanup had removed retained v4 assets and `pymatgen/mp-api`; restored 39 v4 files (mismatch=0), installed project-declared `pymatgen`/`mp-api` with `numpy<2`, `pip check` clean, Conv1D `/GPU:0` finite, MP tests 4/4, full remote pytest 134/134.
 - Remote v4/v5 hashes matched local frozen values after restoration.
 - First V100 smoke: SSL 1 epoch and supervised train-only 1 epoch passed, but evaluation-only failed at Conv1D inference because the newly uncompiled evaluation model allowed Keras/XLA auto-JIT; V100 cuDNN autotuner could not select a supported `convBiasActivationForward` config.
 - Root-cause TDD fix: evaluation now restores frozen best **before** `model.compile(jit_compile=False)`. This avoids both optimizer-state restore warnings and XLA inference autotuning. Local Stage-0/full tests passed after the change; corrected source must be resynchronized before rerunning remote smoke.
+
+## Formal GPU run progress and r3 final-gate fix
+
+- Formal driver launched as a single `flock`-guarded detached process (duplicate-launch incident documented separately). GPU-only, `CUDA_VISIBLE_DEVICES=0`.
+- SSL completed 60 epochs: latest visible epoch 57 `val=0.34038 mse=0.34038 mmae=0.11383 mask=0.248`, symmetry weight 0.000; best/last checkpoints and `ssl_history.json` present.
+- Supervised train-only completed 60 epochs (636 steps/epoch, aggregate metrics): late epochs `val_loss≈0.7170`, `val_gap_mae≈0.0027 eV`, `val_type_acc≈0.9623`, `val_type_macro_f1≈0.9454`; canonical aggregate `val_loss` best epoch = 47; best/last/accepted frozen before any outer access.
+- Evaluation-only generated metrics/predictions/MC/reports; the run then failed ONLY at the final artifact content gate with `ImportError: cannot import name 'finetune_supervised' from 'scripts' (unknown location)` — a remote name-shadowing issue, not a training defect.
+- r3 fix (commit `bb66e6b1b6667aebf577bfef8043042de7a46cde`, tag `v6-metricfix-sync-r3-20260828`): `src/utils/selection_manifest.py` holds the lightweight (no TensorFlow) selection-manifest validator; both the pipeline and the finetune CLI reference it, so the pipeline no longer imports the `scripts` package at the final gate. Local evidence: Stage-0 `117 passed in 26.06s`, full WSL `135 passed in 211.56s`.
+- Remaining remote steps are purely mechanical once connectivity returns: apply r3 core archive, rerun remote compile/pytest, then rerun the pipeline WITHOUT `--fresh/--force-*` so training stages skip and only the final gate + model-brain manifest complete.
 
 ## Pending gates
 
