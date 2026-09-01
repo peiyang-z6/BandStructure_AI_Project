@@ -764,8 +764,12 @@ class RobustBandDownloader:
 
 
 def metadata_candidate_limit(target_count: int) -> int:
-    """Bound AFLUX metadata paging while leaving headroom for no-data records."""
-    return max(100, min(target_count * 2, 80_000))
+    """Bound AFLUX metadata paging while leaving headroom for no-data records.
+
+    Measured yield is ~50-59% usable records per candidate, so a 60k usable
+    target needs a ~120k candidate pool. Cap at 160k to stay bounded.
+    """
+    return max(100, min(target_count * 2, 160_000))
 
 
 def main() -> None:
@@ -828,8 +832,8 @@ def main() -> None:
             query_params["theoretical"] = True
         if args.source == "aflow":
             # Fetch twice the target by default because a material may advertise
-            # a bands file while the payload is missing or malformed. The 80k cap
-            # keeps paging bounded while allowing a 30k usable target to query 60k.
+            # a bands file while the payload is missing or malformed. The 160k cap
+            # keeps paging bounded while allowing a 60k usable target to query 120k.
             query_params["limit"] = metadata_candidate_limit(args.target)
             query_params["page_size"] = 500
             query_params["gap_bins"] = max(1, args.gap_bins)

@@ -818,6 +818,13 @@ class Stage0RobustnessTest(unittest.TestCase):
 
         self.assertEqual(metadata_candidate_limit(30_000), 60_000)
 
+    def test_aflow_60000_queries_a_120000_candidate_metadata_pool(self):
+        # ~50-59% historical yield means 60k usable needs ~120k candidates;
+        # the old 80k hard cap would strand the final ~20k records.
+        from src.data.batch_download import metadata_candidate_limit
+
+        self.assertEqual(metadata_candidate_limit(60_000), 120_000)
+
     def test_latent_features_are_extracted_in_bounded_batches(self):
         import tensorflow as tf
         from types import SimpleNamespace
