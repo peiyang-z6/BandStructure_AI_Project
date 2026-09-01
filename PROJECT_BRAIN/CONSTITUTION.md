@@ -1,7 +1,7 @@
 # BandStructure AI Project Constitution
 
-Version: 4.10
-Updated: 2026-08-28
+Version: 4.11
+Updated: 2026-08-31
 Status: active project rules
 
 ## 1. Mission
@@ -157,6 +157,9 @@ Phase C 应复用现有 encoder/trainer/report/provenance 机制，现有 6D 模
 - Fermi 标注必须参与能量零点校准；反向轴保留正确符号。
 - 人工标注 train/val 按来源图像或文档分组。
 - 缺少正式 vision detector 权重时，自动检测必须标记为 optional/unverified，不能声称已验收。
+- 工作台状态（标注、定标值、材料信息）必须按图像内容寻址持久化到后端 JSON 缓存，重开同一图像自动恢复；状态只存图像像素坐标，不依赖缩放/平移。
+- CV 提取必须输出聚合质量分（detector 置信度仅在权重存在时计入；panel 来源、骨架密度、k 向覆盖、分辨率必须实测）。GUI 提取质量指示灯绿/黄/红，黄/红必须提示人工复核。
+- 脑推理不确定性只能用真实输出信号（softmax 熵、极值峰锐度、gap 合理性）；没有 dropout 层的 eval 路径不得虚构 MC-Dropout 方差。
 
 ## 10. Documentation and Verification
 

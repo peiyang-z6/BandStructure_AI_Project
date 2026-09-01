@@ -62,10 +62,10 @@ def test_brain_invoker_defaults_resolve_to_latest_formal_artifacts():
     from src.vision.brain_invoker import PhysicsBrainInvoker
 
     expected = {
-        "encoder_path": "artifacts/models/aflow_noleak_v5_30k_seed42/ssl_mbm_pretrained.keras",
-        "weights_path": "artifacts/models/aflow_noleak_v5_30k_seed42/finetuned.weights.h5",
-        "norm_path": "artifacts/models/aflow_noleak_v5_30k_seed42/ssl_mbm_norm_stats.json",
-        "config_path": "artifacts/models/aflow_noleak_v5_30k_seed42/finetuned_config.json",
+        "encoder_path": "artifacts/models/aflow_noleak_v6_30k_seed42_metricfix/ssl_mbm_pretrained.keras",
+        "weights_path": "artifacts/models/aflow_noleak_v6_30k_seed42_metricfix/finetuned.weights.h5",
+        "norm_path": "artifacts/models/aflow_noleak_v6_30k_seed42_metricfix/ssl_mbm_norm_stats.json",
+        "config_path": "artifacts/models/aflow_noleak_v6_30k_seed42_metricfix/finetuned_config.json",
     }
     parameters = inspect.signature(PhysicsBrainInvoker.__init__).parameters
     for name, relative_path in expected.items():
@@ -140,9 +140,9 @@ def test_aflow_30000_snapshot_is_separate_from_the_immutable_v4_baseline():
     assert manifest["restored_v4_baseline"]["h5_group_count"] == 6_443
 
 
-def test_latest_model_smoke_targets_v5_portable_paths():
+def test_latest_model_smoke_targets_v6_metricfix_paths():
     text = (ROOT / "tests" / "smoke_latest_model.py").read_text(encoding="utf-8")
-    assert "aflow_noleak_v5_30k_seed42" in text
+    assert "aflow_noleak_v6_30k_seed42_metricfix" in text
     assert "ood_tensors_v5_30000_seed42" in text
     assert "cfg['norm_path']" not in text
     assert "cfg['encoder_path']" not in text
@@ -150,5 +150,5 @@ def test_latest_model_smoke_targets_v5_portable_paths():
 
 def test_gui_tsne_path_targets_latest_formal_experiment():
     text = (ROOT / "scripts" / "gui_workbench.py").read_text(encoding="utf-8")
-    expected = '"aflow_noleak_v5_30k_seed42" / "latent_tsne_spacegroups.png"'
+    expected = '"aflow_noleak_v6_30k_seed42_metricfix" / "latent_tsne_spacegroups.png"'
     assert expected in text

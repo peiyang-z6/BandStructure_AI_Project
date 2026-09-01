@@ -23,6 +23,17 @@ Code tags: `v6-metricfix-code-20260827`, `v6-metricfix-sync-20260828`, `v6-metri
 
 v6 正式指标（6,019 outer，独立重算）：learned line-mode MAE/RMSE `0.000407/0.007109 eV`（解析 baseline 0/0）、model-vs-global-DFT MAE `0.640244 eV`、type accuracy `0.958797`、Macro F1 `0.949251`、spacegroup-macro `0.965795`、mismatch accuracy `0.830549`、MC raw 95% coverage `0.803954`。
 
+### Phase 6 启动
+
+Phase 6 启动：完成环境固化、GUI 状态持久化、CV 不确定性估计，并建立文献挖掘 Pipeline 原型。
+
+- **P0 环境固化**：`requirements.txt` 全部核心依赖 `==` 实测锁定（tensorflow==2.21.0, keras==3.15.1, mp-api==0.46.4, emmet-core==0.87.1 等 27 项，与 v6 验收运行时一致）；`environment.yml` = `conda env export --no-builds` 全量快照（27 conda + 120 pip）。验证：pin 与 pip freeze 逐项一致、`pip check` 干净。
+- **P1 GUI 状态持久化**：`gui_workbench.py` 内 `WorkbenchStateStore`（`data/annotations/workbench_state/`，图像内容 SHA-256 寻址，原子写）；标注/定标/材料信息 800ms 防抖自动保存 + 换图/关闭保存 + 同图重开自动恢复。宪法 §9（tkinter only）下选择后端 JSON 缓存分支。
+- **P2 CV 置信度**：`multi_format_parser.py` 聚合 `cv_quality`（0–1 分 + green/yellow/red；detector 权重缺失时 `optional_missing_score_excluded`）；`brain_invoker.py` `compute_brain_uncertainty`（熵 + 极值峰锐度 + gap 合理性；明确不用 MC-Dropout）；GUI 右侧质量指示灯 + 黄/红警告文案。
+- **P3 文献挖掘**：`literature_mining_pipeline.py` 原地升级——PDF 页内图 + PNG/JPG/JPEG/BMP 直接遍历；记录含 CV/脑置信度；h5 attrs `cv_confidence`；《文献挖掘摘要报告》统计成功提取率、平均置信度、潜在 Direct Gap 材料数量。输出默认 `data/raw/experimental/experimental_bands.h5`（宪法 §3 兼容，不建根级 `data_cache/`——用户已批准）。
+- **附带**：latest-model 指针（brain_invoker 默认路径 / GUI t-SNE / smoke_latest_model）v5→v6 并更新测试期望。
+- TDD：新增 `tests/test_workbench_state.py`（7）、`tests/test_cv_confidence.py`（6）、`tests/test_literature_mining.py`（5），全部 RED→GREEN。
+
 ## Why v6 Is Required
 
 v5 `aflow_noleak_v5_30k_seed42` 的字节资产仍完整，但监督模型选择被审计判定无效：

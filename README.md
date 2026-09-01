@@ -12,6 +12,22 @@
 
 后续经批准的扩展方向是**在现有链路上**增加 crystal graph → multi-band Eₙ(k)、DFT 质检/相似检索和不确定性主动学习，不建立并列冗余框架。
 
+## 环境固化（2026-08-31 Phase 6 P0）
+
+- `requirements.txt`：全部核心依赖以 `==` 锁定到实测版本（`tensorflow==2.21.0`、`keras==3.15.1`、`mp-api==0.46.4`、`emmet-core==0.87.1` 等 27 项），与 v6 验收运行时一致；
+- `environment.yml`：`conda env export --no-builds` 全量快照（Python 3.11.15，27 conda + 120 pip 依赖），`conda env create -f environment.yml` 可复现；
+- 运行载体说明：训练与 GUI/CV 全部在 **WSL2 conda env `bandstructure-ai`** 中运行（`python scripts/gui_workbench.py` 亦在 WSL 下启动）；Windows 原生 Python 不作为项目运行时。
+- 验证：27 个 pin 与 `pip freeze` 逐项一致；`pip check` 无冲突。
+
+## 当前状态（2026-08-31 Phase 6：系统加固与数据飞轮启动）
+
+在 v6 验收基础上完成 SCI 级加固（详细记录见 `PROJECT_BRAIN/agent_logs/20260831_phase6_execution.md`）：
+
+- **[P1] GUI 工作台状态持久化**：`scripts/gui_workbench.py` 新增 `WorkbenchStateStore`（后端 JSON 缓存 `data/annotations/workbench_state/`，按图像内容 SHA-256 寻址）；标注、定标值（Y/X 轴）、材料信息在改动后 800ms 防抖自动保存，重开同一张图（改名/复制亦命中）自动恢复。宪法 §9 约束下不引入 Gradio/web。
+- **[P2] CV 提取置信度 + 质量指示灯**：`src/vision/multi_format_parser.py` 输出聚合 `cv_quality`（panel 来源可靠性、frame 裁剪、骨架密度、k 向占位、分辨率、点数；无 detector 权重时如实标 `optional_missing_score_excluded`）；`src/vision/brain_invoker.py` 输出 `compute_brain_uncertainty`（type softmax 熵 + 极值峰锐度 + gap 物理合理性，不用 MC-Dropout——eval 路径无 dropout 层）；GUI 右侧新增绿/黄/红指示灯，黄/红时显示"⚠️ 图像退化严重/特征模糊，提取结果可能存在误差，建议人工仔细复核定标点。"
+- **[P3] 文献挖掘 Pipeline**：`scripts/literature_mining_pipeline.py` 原地升级——目录内 PDF（抽取页内图）+ PNG/JPG/JPEG/BMP 直接遍历；每条记录含 CV 置信度与脑置信度；HDF5（`data/raw/experimental/experimental_bands.h5`）attrs 增加 `cv_confidence`；摘要报告输出《文献挖掘摘要报告》并统计成功提取率、平均置信度、潜在 Direct Gap 材料数量。
+- **[附带] latest-model 指针 v5→v6**：`brain_invoker` 默认路径、GUI t-SNE 图、`smoke_latest_model.py` 指向 `aflow_noleak_v6_30k_seed42_metricfix`，测试期望同步更新。
+
 ## 当前状态（2026-08-28 最终验收）
 
 ### v6 metric-fix：已正式验收为 latest accepted

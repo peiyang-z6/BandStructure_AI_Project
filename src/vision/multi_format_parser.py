@@ -25,6 +25,26 @@ VIDEO_SUFFIXES = {".mp4", ".avi", ".mov", ".mkv", ".gif"}
 VECTOR_SUFFIXES = {".pdf", ".eps"}
 
 
+def cv_quality_level(score: float) -> str:
+    """Map an aggregated 0-1 extraction-quality score to the traffic-light level."""
+    score = float(np.clip(score, 0.0, 1.0))
+    if score >= 0.6:
+        return "green"
+    if score >= 0.35:
+        return "yellow"
+    return "red"
+
+
+_PANEL_SOURCE_SCORE = {
+    "vision_detector_yolov8_pose": 0.9,
+    "line_plot_frame": 0.8,
+    "long_line_plot_frame": 0.8,
+    "largest_gray_band_panel": 0.65,
+    "largest_dark_plot_frame": 0.6,
+    "fallback_full_image": 0.3,
+}
+
+
 @dataclass
 class ParsedBandData:
     """Geometry extracted from a band-structure carrier."""
@@ -119,12 +139,23 @@ class MultiFormatParser:
             raise ValueError("No usable vector path points were detected in the PDF")
 
         xy = np.asarray(points, dtype=np.float32)
+        vector_score = float(np.clip(len(xy) / 2000.0, 0.0, 0.9))
+        vector_quality = {
+            "score": vector_score,
+            "level": cv_quality_level(vector_score),
+            "detector_status": "not_applicable_vector",
+            "components": {
+                "panel_detection": "pdf_vector_drawings",
+                "vector_points": int(len(xy)),
+            },
+        }
         return self._coords_to_band_data(
             path,
             "vector",
             xy,
             image_shape=(float(page.rect.height), float(page.rect.width)),
-            metadata={"vector_points": int(len(xy)), "parser": "PyMuPDF"},
+            metadata={"vector_points": int(len(xy)), "parser": "PyMuPDF",
+                      "cv_quality": vector_quality},
         )
 
     def parse_image(self, path: str) -> ParsedBandData:
@@ -149,6 +180,7 @@ class MultiFormatParser:
         x0, y0 = offset
         self._draw_detection_overlay(overlay, panel_meta)
         coords = np.stack([xs, ys], axis=1).astype(np.float32)
+        cv_quality = self._compute_cv_quality(panel_meta, coords, panel.shape)
         parsed = self._coords_to_band_data(
             path,
             "image",
@@ -157,7 +189,8 @@ class MultiFormatParser:
             skeleton_pixels=coords,
             overlay_image=overlay,
             panel_image=panel,
-            metadata={"skeleton_pixels": int(len(coords)), "mask_mode": mask_mode, **panel_meta},
+            metadata={"skeleton_pixels": int(len(coords)), "mask_mode": mask_mode,
+                      "cv_quality": cv_quality, **panel_meta},
         )
         self._draw_skeleton_overlay(overlay, panel.shape[:2], offset, skeleton)
         parsed.overlay_image = overlay
@@ -191,6 +224,79 @@ class MultiFormatParser:
             }
             return g_panel, g_offset, merged
         return detected
+
+    def _compute_cv_quality(
+        self,
+        panel_meta: Dict[str, Any],
+        skeleton_pixels: np.ndarray,
+        panel_shape: tuple[int, ...],
+    ) -> Dict[str, Any]:
+        """Aggregate extraction quality into a 0-1 score with a traffic-light level.
+
+        Components (all measured, no fabricated detector claims):
+          - panel source reliability (geometry frame vs fallback) + detector conf
+            only when vision weights exist (constitution §9: optional/unverified);
+          - frame crop quality;
+          - skeleton density and column (k-direction) occupancy;
+          - panel resolution and skeleton point count.
+        """
+        height = float(panel_shape[0])
+        width = float(panel_shape[1])
+        area = max(height * width, 1.0)
+        n_pixels = int(len(skeleton_pixels))
+
+        source = str(panel_meta.get("panel_detection", "fallback_full_image"))
+        base = 0.3
+        for key, val in _PANEL_SOURCE_SCORE.items():
+            if source.startswith(key):
+                base = val
+                break
+        detector_conf = panel_meta.get("vision_detector_confidence")
+        if detector_conf is not None:
+            detector_status = "detector_confidence_used"
+            detector_score = float(np.clip(float(detector_conf), 0.0, 1.0))
+        else:
+            detector_status = "optional_missing_score_excluded"
+            detector_score = base
+        panel_score = 0.6 * base + 0.4 * detector_score
+
+        frame_crop = panel_meta.get("frame_crop")
+        frame_score = 0.8 if frame_crop not in (None, "none") else 0.4
+
+        if n_pixels > 0:
+            density = float(n_pixels / area)
+            xs = skeleton_pixels[:, 0]
+            col_occ = float(len(np.unique(np.clip(xs, 0, width - 1).astype(int)))) / max(width, 1.0)
+        else:
+            density, col_occ = 0.0, 0.0
+        density_score = float(np.clip(density / 0.02, 0.0, 1.0))
+        res_score = float(np.clip(height / 400.0, 0.0, 1.0))
+        count_score = float(np.clip(n_pixels / 2000.0, 0.0, 1.0))
+
+        score = (
+            0.25 * panel_score
+            + 0.15 * frame_score
+            + 0.20 * density_score
+            + 0.20 * col_occ
+            + 0.12 * res_score
+            + 0.08 * count_score
+        )
+        score = float(np.clip(score, 0.0, 1.0))
+        return {
+            "score": score,
+            "level": cv_quality_level(score),
+            "detector_status": detector_status,
+            "components": {
+                "panel_detection": source,
+                "panel_score": panel_score,
+                "frame_crop": frame_crop if frame_crop not in (None, "none") else "none",
+                "frame_score": frame_score,
+                "skeleton_density": density,
+                "column_occupancy": col_occ,
+                "panel_resolution_score": res_score,
+                "skeleton_pixels": n_pixels,
+            },
+        }
 
     def _detect_with_vision_model(self, image: np.ndarray) -> Optional[tuple[np.ndarray, tuple[int, int], Dict[str, Any]]]:
         """Use the trained pose model as a panel locator, not as the physics brain."""

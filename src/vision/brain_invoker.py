@@ -20,6 +20,64 @@ from .physics_reconstructor import ReconstructedTensor
 TYPE_LABELS = ["metal", "direct", "indirect"]
 
 
+def _uncertainty_level(score: float) -> str:
+    score = float(np.clip(score, 0.0, 1.0))
+    if score >= 0.6:
+        return "green"
+    if score >= 0.35:
+        return "yellow"
+    return "red"
+
+
+def compute_brain_uncertainty(
+    type_probs: Dict[str, float],
+    vbm_probability,
+    cbm_probability,
+    gap_ev: float,
+) -> Dict[str, Any]:
+    """Aggregate brain-output uncertainty into a 0-1 confidence score.
+
+    Components (measured from real outputs, no MC-Dropout — the supervised
+    eval path has no dropout layers so MC variance would be a constant zero):
+      - normalized entropy of the type softmax (1 - H/Hmax);
+      - extremum peak sharpness of the VBM/CBM probability heads
+        (1 - mean/peak, worst of the two);
+      - physical plausibility of the predicted gap.
+    """
+    probs = np.asarray(
+        [float(type_probs.get(label, 0.0)) for label in TYPE_LABELS], dtype=np.float64
+    )
+    probs = probs / max(float(probs.sum()), 1e-12)
+    entropy_raw = float(-np.sum(probs * np.log(probs + 1e-12)))
+    h_max = math.log(len(probs))
+    entropy = entropy_raw / h_max if h_max > 0 else 0.0
+    entropy_confidence = 1.0 - entropy
+
+    def sharpness(arr) -> float:
+        a = np.asarray(arr, dtype=np.float64).reshape(-1)
+        if a.size == 0:
+            return 0.0
+        peak = float(a.max())
+        mean = float(a.mean())
+        if peak <= 0.0:
+            return 0.0
+        return float(np.clip(1.0 - mean / peak, 0.0, 1.0))
+
+    peak_sharpness = min(sharpness(vbm_probability), sharpness(cbm_probability))
+    gap_plausible = bool(-0.05 <= float(gap_ev) <= 15.0)
+    gap_term = 1.0 if gap_plausible else 0.3
+    score = float(np.clip(0.45 * entropy_confidence + 0.35 * peak_sharpness + 0.2 * gap_term, 0.0, 1.0))
+    return {
+        "score": score,
+        "level": _uncertainty_level(score),
+        "entropy": entropy,
+        "entropy_confidence": entropy_confidence,
+        "peak_sharpness": peak_sharpness,
+        "gap_plausible": gap_plausible,
+        "gap_ev": float(gap_ev),
+    }
+
+
 @dataclass
 class BrainPrediction:
     """Physics inference emitted by the supervised model brain."""
@@ -48,10 +106,10 @@ class PhysicsBrainInvoker:
 
     def __init__(
         self,
-        encoder_path: str = "artifacts/models/aflow_noleak_v5_30k_seed42/ssl_mbm_pretrained.keras",
-        weights_path: str = "artifacts/models/aflow_noleak_v5_30k_seed42/finetuned.weights.h5",
-        norm_path: str = "artifacts/models/aflow_noleak_v5_30k_seed42/ssl_mbm_norm_stats.json",
-        config_path: str = "artifacts/models/aflow_noleak_v5_30k_seed42/finetuned_config.json",
+        encoder_path: str = "artifacts/models/aflow_noleak_v6_30k_seed42_metricfix/ssl_mbm_pretrained.keras",
+        weights_path: str = "artifacts/models/aflow_noleak_v6_30k_seed42_metricfix/finetuned.weights.h5",
+        norm_path: str = "artifacts/models/aflow_noleak_v6_30k_seed42_metricfix/ssl_mbm_norm_stats.json",
+        config_path: str = "artifacts/models/aflow_noleak_v6_30k_seed42_metricfix/finetuned_config.json",
     ) -> None:
         self.encoder_path = Path(encoder_path)
         self.weights_path = Path(weights_path)
@@ -107,6 +165,9 @@ class PhysicsBrainInvoker:
                 "raw_predicted_type": raw_predicted_type,
                 "topology_override": topology_override,
             },
+        )
+        prediction.metadata["confidence"] = compute_brain_uncertainty(
+            type_probs, vbm_prob, cbm_prob, gap
         )
         recommender = ApplicationRecommender()
         prediction.application_recommendation_details = recommender.recommend_structured(prediction, reconstructed)

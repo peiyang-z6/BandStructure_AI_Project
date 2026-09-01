@@ -12,6 +12,7 @@ v2 enhancements:
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 import os
@@ -38,8 +39,9 @@ if str(ROOT) not in sys.path:
 # ── Paths ──
 OUTPUT_DIR = ROOT / "artifacts" / "reports" / "gui_workbench"
 TRAINING_DATA_DIR = ROOT / "data" / "annotations" / "human"
-TSNE_IMAGE = ROOT / "artifacts" / "reports" / "aflow_noleak_v5_30k_seed42" / "latent_tsne_spacegroups.png"
+TSNE_IMAGE = ROOT / "artifacts" / "reports" / "aflow_noleak_v6_30k_seed42_metricfix" / "latent_tsne_spacegroups.png"
 DETECTOR_PATH = ROOT / "artifacts" / "models" / "vision_detector" / "band_plot_yolov8_pose_best.pt"
+WORKBENCH_STATE_DIR = ROOT / "data" / "annotations" / "workbench_state"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 TRAINING_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -71,6 +73,82 @@ def _get_brain():
         from src.vision.brain_invoker import PhysicsBrainInvoker
         _BRAIN = PhysicsBrainInvoker()
     return _BRAIN
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Session state persistence (Phase 6 P1)
+# ═════════════════════════════════════════════════════════════════════════════
+
+def annotations_from_json(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert the JSON-serialized annotations dict back to canvas structures.
+
+    All coordinates stay in original-image pixel coordinates (zoom/pan never
+    changes the stored labels).
+    """
+    panel = data.get("panel")
+    fermi = data.get("fermi_y")
+    vbm = data.get("vbm")
+    cbm = data.get("cbm")
+    return {
+        "panel": tuple(float(v) for v in panel) if panel else None,
+        "fermi_y": float(fermi) if fermi is not None else None,
+        "vb_strokes": [
+            [(float(p[0]), float(p[1])) for p in stroke]
+            for stroke in data.get("vb_strokes", [])
+        ],
+        "cb_strokes": [
+            [(float(p[0]), float(p[1])) for p in stroke]
+            for stroke in data.get("cb_strokes", [])
+        ],
+        "xaxis_pts": [(float(p[0]), float(p[1])) for p in data.get("xaxis_pts", [])],
+        "yaxis_pts": [(float(p[0]), float(p[1])) for p in data.get("yaxis_pts", [])],
+        "vbm": tuple(float(v) for v in vbm) if vbm else None,
+        "cbm": tuple(float(v) for v in cbm) if cbm else None,
+        "gap_type": data.get("gap_type"),
+    }
+
+
+class WorkbenchStateStore:
+    """Backend JSON cache that persists per-image workbench state.
+
+    State (annotations + axis calibration + material id/label) is keyed by the
+    image *content* (SHA-256 of normalized PNG bytes + pixel size), so the same
+    figure restored under a different filename or after a refresh still hits
+    its previous session. Writes are atomic (temp file + rename).
+    """
+
+    def __init__(self, state_dir=None):
+        self.state_dir = Path(state_dir) if state_dir is not None else WORKBENCH_STATE_DIR
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def image_key(pil_img: "Image.Image") -> str:
+        normalized = pil_img.convert("RGB")
+        buffer = io.BytesIO()
+        normalized.save(buffer, format="PNG")
+        digest = hashlib.sha256(buffer.getvalue()).hexdigest()
+        w, h = normalized.size
+        return f"{digest}_{w}x{h}"
+
+    def state_path(self, key: str) -> Path:
+        return self.state_dir / f"{key}.json"
+
+    def save(self, key: str, record: Dict[str, Any]) -> None:
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        target = self.state_path(key)
+        tmp = self.state_dir / f".{key}.json.tmp"
+        tmp.write_text(json.dumps(record, indent=2, ensure_ascii=True), encoding="utf-8")
+        tmp.replace(target)
+
+    def load(self, key: str) -> Optional[Dict[str, Any]]:
+        path = self.state_path(key)
+        if not path.is_file():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return None
+        return data if isinstance(data, dict) else None
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -135,7 +213,7 @@ class CurveTracer:
 class DrawingCanvas(tk.Canvas):
     """Interactive canvas with zoom, scroll, and band-structure annotation tools."""
 
-    def __init__(self, parent, on_status: callable = None, **kw):
+    def __init__(self, parent, on_status: callable = None, on_change: callable = None, **kw):
         kw.setdefault("width", CANVAS_W)
         kw.setdefault("height", CANVAS_H)
         kw.setdefault("bg", CANVAS_BG)
@@ -144,6 +222,7 @@ class DrawingCanvas(tk.Canvas):
         super().__init__(parent, **kw)
 
         self.on_status = on_status or (lambda s: None)
+        self.on_change = on_change or (lambda: None)
 
         # Image state
         self._pil_original: Optional[Image.Image] = None  # always the unresized original
@@ -363,6 +442,12 @@ class DrawingCanvas(tk.Canvas):
             self._redraw_grid()
             self._draw_hint()
         self._draw_annotations()
+        self.on_change()
+
+    def restore_annotations(self, data: Dict[str, Any]):
+        """Restore a previous session's annotations (image pixel coordinates)."""
+        self.annotations = annotations_from_json(data)
+        self._redraw_all()
 
     def _redraw_grid(self):
         w, h = int(self["width"]), int(self["height"])
@@ -790,6 +875,9 @@ class BandStructureWorkbench:
         self._current_file_path = ""
         self._canvas_w, self._canvas_h = CANVAS_W, CANVAS_H
         self._toolbar: Optional[FloatingToolbar] = None
+        self._state_store = WorkbenchStateStore()
+        self._current_image_key: Optional[str] = None
+        self._save_after_id = None
 
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -822,7 +910,8 @@ class BandStructureWorkbench:
         canvas_area = tk.Frame(main, bg=BG)
         canvas_frame = tk.Frame(canvas_area, bg=BORDER)
         canvas_frame.pack(fill="both", expand=True)
-        self._canvas = DrawingCanvas(canvas_frame, on_status=self._set_status)
+        self._canvas = DrawingCanvas(canvas_frame, on_status=self._set_status,
+                                     on_change=self._schedule_state_save)
         self._canvas.pack(fill="both", expand=True)
         main.add(canvas_area, minsize=400, stretch="always")
 
@@ -865,6 +954,14 @@ class BandStructureWorkbench:
         tk.Label(right_container, textvariable=self._gap_var, bg="#1a1a2e", fg="#8b949e",
                  font=("Segoe UI", 10, "bold"), wraplength=340, pady=5).pack(
                      fill="x", pady=(0, 4))
+
+        # ── Extraction quality indicator (Phase 6 P2) ──
+        self._quality_var = tk.StringVar(value="提取质量: ○ 未运行 CV")
+        self._quality_hint_var = tk.StringVar(value="")
+        tk.Label(right_container, textvariable=self._quality_var, bg="#1a1a2e", fg="#8b949e",
+                 font=("Segoe UI", 10, "bold"), anchor="w", pady=2).pack(fill="x")
+        tk.Label(right_container, textvariable=self._quality_hint_var, bg=BG, fg="#d29922",
+                 font=("Segoe UI", 9), wraplength=340, justify="left", anchor="w").pack(fill="x")
 
         # Training info (always visible, compact)
         train_info_row = tk.Frame(right_container, bg=BG)
@@ -978,24 +1075,29 @@ class BandStructureWorkbench:
             return
         self._set_status(f"Loading: {os.path.basename(path)} ...")
         self.root.update_idletasks()
+        # Persist the previous image's session before switching away from it.
+        self._autosave_state()
         try:
             if path.lower().endswith(".pdf"):
-                self._load_pdf(path)
+                pil_img = self._render_pdf_to_pil(path)
+                self._canvas.load_image(pil_img)
             else:
-                pil_img = Image.open(path)
+                pil_img = Image.open(path).convert("RGB")
                 self._canvas.load_image(pil_img)
         except Exception as e:
             messagebox.showerror("Error", str(e))
             return
         self._current_file_path = path
+        self._current_image_key = WorkbenchStateStore.image_key(pil_img)
         self._canvas_w, self._canvas_h = self._canvas.get_canvas_dims()
         self._sync_zoom_label()
         self._set_status(f"Loaded: {os.path.basename(path)} "
                          f"({self._canvas_w}x{self._canvas_h}) — "
                          f"Mouse-wheel=zoom, Middle-click=pan")
+        self._restore_state_if_present()
         self.root.after(100, lambda: self._run_cv(path))
 
-    def _load_pdf(self, path: str):
+    def _render_pdf_to_pil(self, path: str) -> "Image.Image":
         try:
             import fitz
             doc = fitz.open(path)
@@ -1004,7 +1106,60 @@ class BandStructureWorkbench:
             doc.close()
         except ImportError:
             img = Image.open(path).convert("RGB")
-        self._canvas.load_image(img)
+        return img
+
+    def _load_pdf(self, path: str):
+        # Kept for backward-compatible callers; new flow uses _render_pdf_to_pil.
+        self._canvas.load_image(self._render_pdf_to_pil(path))
+
+    # ── Session persistence (Phase 6 P1) ─────────────────────────────────
+    def _schedule_state_save(self):
+        """Debounced autosave after annotation/calibration changes."""
+        if self._save_after_id is not None:
+            self.root.after_cancel(self._save_after_id)
+        self._save_after_id = self.root.after(800, self._autosave_state)
+
+    def _autosave_state(self):
+        self._save_after_id = None
+        if not self._current_file_path or not self._current_image_key:
+            return
+        ann_data = json.loads(self._canvas.get_annotation_json())
+        record = {
+            "schema_version": 1,
+            "input_path": self._current_file_path,
+            "image_key": self._current_image_key,
+            "canvas_width": self._canvas_w,
+            "canvas_height": self._canvas_h,
+            "annotations": ann_data,
+            "calibration": {
+                "y_values": [self._y1_var.get(), self._y2_var.get()],
+                "x_values": [self._x1_var.get(), self._x2_var.get()],
+            },
+            "material_id": self._mat_id_var.get(),
+            "gap_label": self._gap_label_var.get(),
+            "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        self._state_store.save(self._current_image_key, record)
+
+    def _restore_state_if_present(self):
+        if not self._current_image_key:
+            return
+        record = self._state_store.load(self._current_image_key)
+        if not record:
+            return
+        self._canvas.restore_annotations(record.get("annotations") or {})
+        calibration = record.get("calibration") or {}
+        y_values = calibration.get("y_values") or [0.0, 5.0]
+        x_values = calibration.get("x_values") or [0.0, 1.0]
+        if len(y_values) >= 2:
+            self._y1_var.set(float(y_values[0]))
+            self._y2_var.set(float(y_values[1]))
+        if len(x_values) >= 2:
+            self._x1_var.set(float(x_values[0]))
+            self._x2_var.set(float(x_values[1]))
+        self._mat_id_var.set(str(record.get("material_id") or ""))
+        self._gap_label_var.set(str(record.get("gap_label") or ""))
+        self._set_status("Restored previous session state (annotations + calibration).")
 
     def _run_cv(self, path: str):
         try:
@@ -1012,13 +1167,39 @@ class BandStructureWorkbench:
             det = str(DETECTOR_PATH) if DETECTOR_PATH.exists() else None
             parsed = MultiFormatParser(detector_path=det).parse(path)
             n = 0
+            quality = None
             if parsed and hasattr(parsed, "metadata"):
                 pv = getattr(parsed.metadata, "get", lambda _: None)(
                     "vision_detector_panel_count", None)
                 n = int(pv) if isinstance(pv, (int, float)) else 0
+                quality = parsed.metadata.get("cv_quality")
+            if quality:
+                self._set_quality(quality)
+            else:
+                self._set_quality({"score": 0.0, "level": "red"})
             self._set_status(f"CV: {n} panel(s) detected — annotate above.")
         except Exception:
+            self._set_quality({"score": 0.0, "level": "red"})
             self._set_status("CV skipped — use manual annotation.")
+
+    def _set_quality(self, quality: Optional[Dict[str, Any]]):
+        """Update the extraction-quality traffic light (green/yellow/red)."""
+        if not quality:
+            self._quality_var.set("提取质量: ○ 未运行 CV")
+            self._quality_hint_var.set("")
+            return
+        level = quality.get("level", "red")
+        score = float(quality.get("score", 0.0))
+        color = {"green": "#2ea043", "yellow": "#d29922", "red": "#f85149"}.get(level, "#8b949e")
+        label = {"green": "良好", "yellow": "注意", "red": "差"}.get(level, level)
+        self._quality_var.set(f"提取质量: ● {label} ({score:.2f})")
+        # color the label text via the hint row's foreground is not enough;
+        # rebuild the light label color through its widget state is not stored,
+        # so we encode color in the hint label and keep text plain.
+        self._quality_hint_var.set(
+            "" if level == "green" else
+            "⚠️ 图像退化严重/特征模糊，提取结果可能存在误差，建议人工仔细复核定标点。"
+        )
 
     # ── Recognition ──
     def _submit_recognition(self):
@@ -1105,6 +1286,13 @@ class BandStructureWorkbench:
                 f"  Gap type:        {badge} (annotated), {gap_type} (model)",
                 f"  Direct prob:     {dp:.1%}",
             ]
+            confidence = (result.metadata or {}).get("confidence")
+            if confidence:
+                lines.append(
+                    f"  Confidence:      {confidence['score']:.2f} ({confidence['level']})"
+                )
+                if not confidence.get("gap_plausible", True):
+                    lines.append("  ⚠ Gap out of physical range — verify calibration.")
             if vbm_m is not None and abs(vbm_m) < 100:
                 lines.append(f"  VB curvature proxy: {vbm_m:.4f} (relative)")
             if cbm_m is not None and abs(cbm_m) < 100:
@@ -1233,6 +1421,7 @@ class BandStructureWorkbench:
         self.root.after(500, self._update_gap_badge_loop)
 
     def _on_close(self):
+        self._autosave_state()
         if self._toolbar:
             self._toolbar.destroy()
         self.root.destroy()

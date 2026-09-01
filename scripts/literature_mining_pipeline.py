@@ -17,6 +17,39 @@ if str(ROOT) not in sys.path:
 
 from src.vision import MultiFormatParser, PhysicsBrainInvoker, PhysicsReconstructor
 from src.vision.brain_invoker import prediction_to_jsonable
+from src.vision.multi_format_parser import IMAGE_SUFFIXES
+
+
+def iter_raster_images(source_dir: Path) -> List[Path]:
+    """Return directly-usable raster figures in a folder (PDFs are extracted separately)."""
+    return sorted(
+        p for p in source_dir.iterdir()
+        if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES
+    )
+
+
+def summarize_records(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Compute the literature-mining headline statistics.
+
+    - success_rate = stored / total (failed and low-confidence count in the denominator);
+    - average_confidence = mean cv_score over records that produced a score
+      (failed extractions carry no score and are excluded from the mean);
+    - direct_gap_candidates = stored records whose brain prediction is 'direct'.
+    """
+    total = len(records)
+    stored = sum(1 for r in records if r.get("status") == "stored")
+    scores = [r["cv_score"] for r in records if "cv_score" in r]
+    direct = sum(
+        1 for r in records
+        if r.get("status") == "stored"
+        and (r.get("prediction") or {}).get("predicted_type") == "direct"
+    )
+    return {
+        "total": total,
+        "success_rate": float(stored / total) if total else 0.0,
+        "average_confidence": float(np.mean(scores)) if scores else None,
+        "direct_gap_candidates": direct,
+    }
 
 
 def extract_pdf_images(pdf_dir: Path, output_dir: Path) -> List[Path]:
@@ -80,6 +113,7 @@ def store_experimental_band(h5_path: Path, image_path: Path, reconstructed, pred
         grp.attrs["source_image"] = str(image_path)
         grp.attrs["line_mode_gap_ev"] = float(prediction.line_mode_gap_ev)
         grp.attrs["predicted_type"] = prediction.predicted_type
+        grp.attrs["cv_confidence"] = float(confidence.get("cv_score", 0.0))
         grp.attrs["confidence"] = json.dumps(confidence)
 
 
@@ -90,6 +124,7 @@ def run_pipeline(args: argparse.Namespace) -> Dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     images = extract_pdf_images(pdf_dir, image_dir)
+    images.extend(p for p in iter_raster_images(pdf_dir) if p not in images)
     parser = MultiFormatParser(
         image_height_ev=args.image_height_ev,
         detector_path=args.detector,
@@ -103,9 +138,14 @@ def run_pipeline(args: argparse.Namespace) -> Dict[str, Any]:
     for image_path in images:
         try:
             parsed = parser.parse(str(image_path))
+            cv_quality = parsed.metadata.get("cv_quality") or {}
             reconstructed = reconstructor.reconstruct(parsed)
             prediction = invoker.predict(reconstructed)
             confidence = physics_confidence(reconstructed, prediction)
+            confidence["cv_score"] = float(cv_quality.get("score", 0.0))
+            confidence["cv_level"] = cv_quality.get("level", "red")
+            brain_confidence = (prediction.metadata or {}).get("confidence") or {}
+            confidence["brain_score"] = float(brain_confidence.get("score", 0.0))
             if confidence["high_confidence"]:
                 store_experimental_band(h5_path, image_path, reconstructed, prediction, confidence)
             records.append(
@@ -113,6 +153,7 @@ def run_pipeline(args: argparse.Namespace) -> Dict[str, Any]:
                     "image": str(image_path),
                     "status": "stored" if confidence["high_confidence"] else "low_confidence",
                     "confidence": confidence,
+                    "cv_score": confidence["cv_score"],
                     "vision_metadata": reconstructed.metadata,
                     "prediction": prediction_to_jsonable(prediction),
                     "tensor_gap_ev": reconstructed.tensor_gap,
@@ -121,12 +162,16 @@ def run_pipeline(args: argparse.Namespace) -> Dict[str, Any]:
         except Exception as exc:
             records.append({"image": str(image_path), "status": "failed", "error": str(exc)})
 
+    stats = summarize_records(records)
     summary = {
         "pdf_dir": str(pdf_dir),
         "images_extracted": len(images),
         "high_confidence": sum(1 for r in records if r.get("status") == "stored"),
         "low_confidence": sum(1 for r in records if r.get("status") == "low_confidence"),
         "failed": sum(1 for r in records if r.get("status") == "failed"),
+        "success_rate": stats["success_rate"],
+        "average_confidence": stats["average_confidence"],
+        "direct_gap_candidates": stats["direct_gap_candidates"],
         "experimental_h5": str(h5_path),
         "records": records,
     }
@@ -140,13 +185,17 @@ def write_report(summary: Dict[str, Any], path: Path) -> None:
     for rec in summary["records"]:
         if "prediction" in rec:
             pred = rec["prediction"]
+            conf = rec.get("confidence") or {}
             rows.append(
-                f"| {Path(rec['image']).name} | {rec['status']} | {pred['line_mode_gap_ev']:.4f} | {pred['predicted_type']} | {rec['confidence']['reason']} |"
+                f"| {Path(rec['image']).name} | {rec['status']} | {pred['line_mode_gap_ev']:.4f} | {pred['predicted_type']} | {conf.get('reason', '')} | {conf.get('cv_score', 0.0):.2f} |"
             )
         else:
-            rows.append(f"| {Path(rec['image']).name} | {rec['status']} | - | - | {rec.get('error', '')} |")
+            rows.append(f"| {Path(rec['image']).name} | {rec['status']} | - | - | {rec.get('error', '')} | - |")
 
-    text = f"""# Literature Experimental Data vs DFT Theory Report
+    success_rate = float(summary.get("success_rate", 0.0))
+    avg_conf = summary.get("average_confidence")
+    avg_conf_text = f"{avg_conf:.3f}" if avg_conf is not None else "N/A"
+    text = f"""# 《文献挖掘摘要报告》 Literature Mining Summary
 
 This report mines experimental/theoretical band figures from PDF images, converts
 valid figures into the project 6D tensor contract, and compares extracted
@@ -159,12 +208,15 @@ line-mode physics against the trained DFT-derived model brain.
 - High-confidence stored bands: `{summary['high_confidence']}`
 - Low-confidence review queue: `{summary['low_confidence']}`
 - Failed images: `{summary['failed']}`
+- **成功提取率 (success rate)**: `{success_rate * 100:.1f}%`
+- **平均置信度 (average CV confidence)**: `{avg_conf_text}`
+- **潜在 Direct Gap 材料数量**: `{summary.get('direct_gap_candidates', 0)}`
 - Experimental HDF5: `{summary['experimental_h5']}`
 
 ## Records
 
-| Image | Status | Brain gap (eV) | Brain type | Physics check |
-|---|---:|---:|---|---|
+| Image | Status | Brain gap (eV) | Brain type | Physics check | CV score |
+|---|---:|---:|---|---|---:|
 {chr(10).join(rows)}
 """
     path.write_text(text, encoding="utf-8")
