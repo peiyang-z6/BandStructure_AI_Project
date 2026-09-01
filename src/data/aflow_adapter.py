@@ -50,6 +50,38 @@ class AFLOWAdapter:
         return "aflow-" + auid.split(":", 1)[-1]
 
     @staticmethod
+    def _lenient_json(text: str) -> Dict[str, Any]:
+        """Parse AFLOW JSON, tolerating trailing commas (server-side change).
+
+        AFLOW recently started emitting trailing commas inside its bandsdata
+        documents, which strict JSON parsers reject. Strip only commas that
+        sit directly before a closing bracket/brace, outside string literals.
+        """
+        stripped = []
+        in_string = False
+        escape = False
+        for i, char in enumerate(text):
+            if in_string:
+                stripped.append(char)
+                if escape:
+                    escape = False
+                elif char == "\\":
+                    escape = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+                stripped.append(char)
+                continue
+            if char == ",":
+                rest = text[i + 1:].lstrip()
+                if rest.startswith("}") or rest.startswith("]"):
+                    continue
+            stripped.append(char)
+        return json.loads("".join(stripped))
+
+    @staticmethod
     def _base_data_url(aurl: str) -> str:
         path = aurl.split(":", 1)[-1].lstrip("/")
         return f"{AFLOWAdapter.DATA_ROOT}/{path}"
@@ -332,7 +364,7 @@ class AFLOWAdapter:
             return {"material_id": material_id, "error": "AFLOW download_url is missing"}
         try:
             compressed = self._request_bytes(url)
-            raw = json.loads(lzma.decompress(compressed).decode("utf-8-sig"))
+            raw = self._lenient_json(lzma.decompress(compressed).decode("utf-8-sig"))
             result = self._parse_band_payload(material_id, raw)
             result["source_sha256"] = hashlib.sha256(compressed).hexdigest()
             result["source_url"] = url

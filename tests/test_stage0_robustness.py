@@ -825,6 +825,29 @@ class Stage0RobustnessTest(unittest.TestCase):
 
         self.assertEqual(metadata_candidate_limit(60_000), 120_000)
 
+    def test_aflow_band_payload_tolerates_trailing_commas(self):
+        # AFLOW changed its bandsdata serialization to emit trailing commas
+        # (invalid strict JSON). The adapter must strip them without touching
+        # string contents.
+        from src.data.aflow_adapter import AFLOWAdapter
+
+        payload = (
+            "{\n"
+            '  "name": "C_s.A1",\n'
+            '  "dos": {\n'
+            '    "sum_s": [0, 0, 0],\n'
+            '    "sum_d": [0.04881, 0, 0],\n'
+            "  },\n"
+            '  "title": "C_s.A1 (FCC)",\n'
+            '  "bands_data": [[0.0, 1.0, 2.0], [0.1, 1.1, 2.1]],\n'
+            '  "Efermi": 0.0,\n'
+            "}\n"
+        )
+        result = AFLOWAdapter._parse_band_payload("aflow-x", AFLOWAdapter._lenient_json(payload))
+        self.assertEqual(result["num_bands"], 2)
+        self.assertEqual(result["num_kpoints"], 2)
+        self.assertEqual(result["efermi"], 0.0)
+
     def test_latent_features_are_extracted_in_bounded_batches(self):
         import tensorflow as tf
         from types import SimpleNamespace
