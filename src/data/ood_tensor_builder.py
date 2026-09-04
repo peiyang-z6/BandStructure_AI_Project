@@ -430,6 +430,35 @@ def _build_sample_tensor(
     return tensor, vbm_idx, cbm_idx, metal_feature_inferred
 
 
+def derive_line_mode_topology(
+    vbm: np.ndarray, cbm: np.ndarray, crossing: bool
+) -> int:
+    """Derive line-mode topology (0/1/2) exclusively from the band path."""
+    if crossing:
+        return 0
+    return 1 if int(np.argmax(vbm)) == int(np.argmin(cbm)) else 2
+
+
+def derive_provider_global_type(
+    is_metal: Optional[bool], is_direct: Optional[bool]
+) -> int:
+    """Provider global electronic type (0/1/2); -1 when undetermined."""
+    if is_metal is True:
+        return 0
+    if is_metal is False and is_direct is True:
+        return 1
+    if is_metal is False and is_direct is False:
+        return 2
+    return -1
+
+
+def derive_line_global_disagreement(line_topology: int, provider_type: int) -> int:
+    """Binary: 1 iff line-mode topology and provider global type conflict."""
+    if provider_type < 0:
+        return -1
+    return int(line_topology != provider_type)
+
+
 def process_band_data(
     h5_path: str,
     metadata_path: Optional[str] = None,

@@ -33,13 +33,22 @@ model = SupervisedBandGapModel(
     metal_anchor_gate_enabled=CONFIG.get("metal_anchor_gap_gate_enabled", False),
 )
 model(tf.zeros([1, data["X_test"].shape[1], data["X_test"].shape[2]], dtype=tf.float32))
-model.load_weights(str(MODEL_DIR / "finetuned.weights.h5"))
+# P0A: the three-task model adds topology/disagreement heads. The frozen v7
+# checkpoint predates them, so load with skip_mismatch (new heads stay at
+# random init until a P0 retrain produces a checkpoint that includes them).
+model.load_weights(str(MODEL_DIR / "finetuned.weights.h5"), skip_mismatch=True)
 
 outputs = model(data["X_test"][:2], training=False)
 gap = outputs["gap"].numpy().reshape(-1)
 type_probabilities = outputs["type"].numpy()
+topology_probabilities = outputs["topology"].numpy()
+disagreement_probabilities = outputs["disagreement"].numpy()
 assert np.isfinite(gap).all() and np.isfinite(type_probabilities).all()
+assert np.isfinite(topology_probabilities).all()
+assert np.isfinite(disagreement_probabilities).all()
 assert np.allclose(type_probabilities.sum(axis=1), 1.0, atol=1e-5)
+assert np.allclose(topology_probabilities.sum(axis=1), 1.0, atol=1e-5)
+assert np.allclose(disagreement_probabilities.sum(axis=1), 1.0, atol=1e-5)
 print(
     json.dumps(
         {

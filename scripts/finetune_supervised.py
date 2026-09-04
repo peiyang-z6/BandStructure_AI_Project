@@ -118,6 +118,39 @@ def tensor_gap_from_extrema(X_raw: np.ndarray) -> np.ndarray:
     return (cbm_min - vbm_max).astype(np.float32)
 
 
+def load_three_task_labels(
+    npz_path: str,
+    material_ids: np.ndarray,
+) -> Dict[str, np.ndarray]:
+    """Align P0 three-task labels (sidecar npz) to the given material_ids.
+
+    Returns arrays keyed by task name, index-aligned with material_ids.
+    Raises ValueError when the sidecar is missing (P0 requires it) or when
+    alignment coverage is incomplete.
+    """
+    sidecar = os.path.join(os.path.dirname(npz_path), "three_task_labels.npz")
+    if not os.path.isfile(sidecar):
+        raise ValueError(
+            "three_task_labels.npz missing next to the split npz; run "
+            "scripts/derive_three_task_labels.py first (P0A)"
+        )
+    with np.load(sidecar) as data:
+        by_id = {
+            str(mid): idx
+            for idx, mid in enumerate(data["material_ids"].astype(str))
+        }
+        arrays = {key: data[key] for key in data.files if key != "material_ids"}
+    ids = [str(mid) for mid in material_ids]
+    missing = [mid for mid in ids if mid not in by_id]
+    if missing:
+        raise ValueError(
+            f"three_task_labels.npz misses {len(missing)}/{len(ids)} material ids, "
+            f"first: {missing[:3]}"
+        )
+    order = [by_id[mid] for mid in ids]
+    return {key: np.asarray(arr)[order] for key, arr in arrays.items()}
+
+
 def load_dataset(
     npz_path: str,
     norm_path: str,
@@ -154,6 +187,17 @@ def load_dataset(
             "segment_ids_train": segment_ids_train,
             "material_ids_train": data["material_ids_train"].copy(),
         }
+        # P0A: three-task labels (sidecar), aligned by material id.
+        try:
+            extra_train = load_three_task_labels(
+                npz_path, result["material_ids_train"]
+            )
+        except ValueError as exc:
+            print(f"[P0A] three-task labels unavailable for train: {exc}")
+            extra_train = {}
+        result["topology_train"] = extra_train.get("line_mode_topology")
+        result["provider_train"] = extra_train.get("provider_global_electronic_type")
+        result["disagreement_train"] = extra_train.get("line_global_disagreement")
         if not include_outer_test:
             return result
 
@@ -185,6 +229,17 @@ def load_dataset(
                 "material_ids_test": data["material_ids_test"].copy(),
             }
         )
+    if include_outer_test:
+        try:
+            extra_test = load_three_task_labels(
+                npz_path, result["material_ids_test"]
+            )
+        except ValueError as exc:
+            print(f"[P0A] three-task labels unavailable for test: {exc}")
+            extra_test = {}
+        result["topology_test"] = extra_test.get("line_mode_topology")
+        result["provider_test"] = extra_test.get("provider_global_electronic_type")
+        result["disagreement_test"] = extra_test.get("line_global_disagreement")
     return result
 
 
@@ -233,11 +288,21 @@ def make_tf_dataset(
     class_weights: Dict[int, float] | None = None,
     augment: bool = False,
     strain_scale: float = 0.01,
+    y_topology: np.ndarray | None = None,
+    y_disagreement: np.ndarray | None = None,
 ) -> tf.data.Dataset:
     labels = {
         "gap": y_gap.reshape(-1, 1).astype(np.float32),
         "type": tf.one_hot(y_type, depth=3).numpy().astype(np.float32),
     }
+    if y_topology is not None:
+        labels["topology"] = tf.one_hot(
+            np.asarray(y_topology, dtype=np.int32), depth=3
+        ).numpy().astype(np.float32)
+    if y_disagreement is not None:
+        labels["disagreement"] = tf.one_hot(
+            np.asarray(y_disagreement, dtype=np.int32), depth=2
+        ).numpy().astype(np.float32)
     if class_weights is None:
         ds = tf.data.Dataset.from_tensor_slices((X, labels))
     else:
@@ -369,15 +434,40 @@ class SupervisedBandGapModel(keras.Model):
             ],
             name="type_head",
         )
+        # P0A: three-task reframing. type_head above predicts the provider
+        # global electronic type (metal/direct/indirect). topology_head below
+        # predicts the line-mode topology observable from the band path, and
+        # disagreement_head predicts whether the two conflict.
+        self.topology_head = keras.Sequential(
+            [
+                layers.Dense(d_model, activation="gelu"),
+                layers.Dropout(dropout),
+                layers.Dense(d_model // 2, activation="gelu"),
+                layers.Dense(3, activation="softmax"),
+            ],
+            name="topology_head",
+        )
+        self.disagreement_head = keras.Sequential(
+            [
+                layers.Dense(d_model // 2, activation="gelu"),
+                layers.Dropout(dropout),
+                layers.Dense(2, activation="softmax"),
+            ],
+            name="disagreement_head",
+        )
+        self.topology_rule_weight_arg = None  # legacy compatibility placeholder
         self.topology_weight = 0.3
+        self.topology_head_weight = 1.0
+        self.disagreement_head_weight = 1.0
         self.entropy_weight = 0.01
         self.extremum_weight = 0.5
-        self.topology_rule_weight = 0.3
+        self.topology_rule_weight = 0.0  # P0: no rule blend into provider head
         self.topology_metal_gap_ev = 0.2
         self.encoder_gradient_scale = 0.1
         self.topology_margin = 0.10
         self.gap_loss_fn = keras.losses.MeanSquaredError()
         self.type_loss_fn = keras.losses.CategoricalCrossentropy(reduction="none")
+        self.disagreement_loss_fn = keras.losses.BinaryCrossentropy(reduction="none")
         self.loss_weights_dict = {"gap": 1.0, "type": 1.0}
         self.gap_loss_tracker = keras.metrics.Mean(name="gap_loss")
         self.gap_mae_tracker = keras.metrics.MeanAbsoluteError(name="gap_mae")
@@ -386,6 +476,14 @@ class SupervisedBandGapModel(keras.Model):
         self.type_macro_f1_tracker = keras.metrics.F1Score(
             average="macro",
             name="type_macro_f1",
+        )
+        self.topology_head_loss_tracker = keras.metrics.Mean(name="topology_head_loss")
+        self.topology_head_acc_tracker = keras.metrics.CategoricalAccuracy(
+            name="topology_head_acc"
+        )
+        self.disagreement_loss_tracker = keras.metrics.Mean(name="disagreement_loss")
+        self.disagreement_acc_tracker = keras.metrics.BinaryAccuracy(
+            name="disagreement_acc"
         )
         self.topology_loss_tracker = keras.metrics.Mean(name="topology_loss")
         self.entropy_loss_tracker = keras.metrics.Mean(name="entropy_loss")
@@ -401,6 +499,10 @@ class SupervisedBandGapModel(keras.Model):
             self.type_loss_tracker,
             self.type_acc_tracker,
             self.type_macro_f1_tracker,
+            self.topology_head_loss_tracker,
+            self.topology_head_acc_tracker,
+            self.disagreement_loss_tracker,
+            self.disagreement_acc_tracker,
             self.topology_loss_tracker,
             self.entropy_loss_tracker,
             self.extremum_loss_tracker,
@@ -438,19 +540,46 @@ class SupervisedBandGapModel(keras.Model):
             ],
             axis=-1,
         )
+        # P0A: provider head stays pure (no rule blend; topology_rule_weight=0
+        # default). The rule-based topology prior now feeds the dedicated
+        # topology_head instead.
         type_pred = (1.0 - self.topology_rule_weight) * learned_type + self.topology_rule_weight * topology_type
         type_pred = type_pred / tf.reduce_sum(type_pred, axis=-1, keepdims=True)
-        return gap, type_pred, topo_features, probs
+        topology_input = tf.concat([pooled, topo_features, topology_type], axis=-1)
+        learned_topology = self.topology_head(topology_input, training=training)
+        disagreement_input = tf.concat(
+            [pooled, topo_features, learned_type, learned_topology], axis=-1
+        )
+        disagreement_pred = self.disagreement_head(
+            disagreement_input, training=training
+        )
+        return gap, type_pred, learned_topology, disagreement_pred, topo_features, probs
 
     def call(self, x, training=False):
-        gap, type_pred, _topo_features, _probs = self._forward(x, training=training)
+        (
+            gap,
+            type_pred,
+            learned_topology,
+            disagreement_pred,
+            _topo_features,
+            _probs,
+        ) = self._forward(x, training=training)
         return {
             "gap": gap,
             "type": type_pred,
+            "topology": learned_topology,
+            "disagreement": disagreement_pred,
         }
 
     def extremum_probabilities(self, x, training=False):
-        _gap, _type_pred, topo_features, probs = self._forward(x, training=training)
+        (
+            _gap,
+            _type_pred,
+            _learned_topology,
+            _disagreement_pred,
+            topo_features,
+            probs,
+        ) = self._forward(x, training=training)
         return topo_features, probs
 
     def _split_batch(self, data):
@@ -485,11 +614,25 @@ class SupervisedBandGapModel(keras.Model):
             return tf.reduce_sum(per_sample * weights) / tf.reduce_sum(weights)
         return tf.reduce_mean(per_sample)
 
+    def _three_class_loss(self, y, key, pred):
+        """Mean categorical CE for a 3-class one-hot head; 0 if label absent."""
+        if key not in y:
+            return tf.constant(0.0, dtype=pred.dtype)
+        return tf.reduce_mean(self.type_loss_fn(y[key], pred))
+
+    def _binary_loss(self, y, key, pred):
+        """Mean binary CE for a 2-class one-hot head; 0 if label absent."""
+        if key not in y:
+            return tf.constant(0.0, dtype=pred.dtype)
+        return tf.reduce_mean(self.disagreement_loss_fn(y[key], pred))
+
     def _metrics_dict(
         self,
         total_loss,
         gap_loss,
         type_loss,
+        topology_head_loss,
+        disagreement_loss,
         topology_loss,
         entropy_loss,
         extremum_loss,
@@ -520,6 +663,20 @@ class SupervisedBandGapModel(keras.Model):
         )
         self.type_acc_tracker.update_state(y["type"], pred["type"])
         self.type_macro_f1_tracker.update_state(y["type"], pred["type"])
+        if "topology" in y:
+            self.topology_head_loss_tracker.update_state(
+                topology_head_loss, sample_weight=batch_weight
+            )
+            self.topology_head_acc_tracker.update_state(
+                y["topology"], pred["topology"]
+            )
+        if "disagreement" in y:
+            self.disagreement_loss_tracker.update_state(
+                disagreement_loss, sample_weight=batch_weight
+            )
+            self.disagreement_acc_tracker.update_state(
+                y["disagreement"], pred["disagreement"]
+            )
         self.topology_loss_tracker.update_state(
             topology_loss,
             sample_weight=topology_metric_weight,
@@ -545,6 +702,8 @@ class SupervisedBandGapModel(keras.Model):
         aggregate_loss = (
             gap_loss_result
             + self.loss_weights_dict["type"] * type_loss_result
+            + self.topology_head_weight * self.topology_head_loss_tracker.result()
+            + self.disagreement_head_weight * self.disagreement_loss_tracker.result()
             + self.topology_weight * topology_loss_result
             + self.entropy_weight * entropy_loss_result
             + self.extremum_weight * extremum_loss_result
@@ -556,6 +715,10 @@ class SupervisedBandGapModel(keras.Model):
             "type_loss": type_loss_result,
             "type_acc": self.type_acc_tracker.result(),
             "type_macro_f1": self.type_macro_f1_tracker.result(),
+            "topology_head_loss": self.topology_head_loss_tracker.result(),
+            "topology_head_acc": self.topology_head_acc_tracker.result(),
+            "disagreement_loss": self.disagreement_loss_tracker.result(),
+            "disagreement_acc": self.disagreement_acc_tracker.result(),
             "topology_loss": topology_loss_result,
             "entropy_loss": entropy_loss_result,
             "extremum_loss": extremum_loss_result,
@@ -565,14 +728,34 @@ class SupervisedBandGapModel(keras.Model):
     def train_step(self, data):
         x, y, sample_weight = self._split_batch(data)
         with tf.GradientTape() as tape:
-            gap_pred, type_pred, topo_features, probs = self._forward(x, training=True)
-            pred = {"gap": gap_pred, "type": type_pred}
+            (
+                gap_pred,
+                type_pred,
+                topology_pred,
+                disagreement_pred,
+                topo_features,
+                probs,
+            ) = self._forward(x, training=True)
+            pred = {
+                "gap": gap_pred,
+                "type": type_pred,
+                "topology": topology_pred,
+                "disagreement": disagreement_pred,
+            }
             gap_loss = self.gap_loss_fn(y["gap"], gap_pred)
             type_loss = self._weighted_type_loss(y["type"], type_pred, sample_weight)
+            topology_head_loss = self._three_class_loss(
+                y, "topology", topology_pred
+            )
+            disagreement_loss = self._binary_loss(
+                y, "disagreement", disagreement_pred
+            )
             topology_loss, entropy_loss, extremum_loss = self._auxiliary_losses(x, y["type"], topo_features, probs)
             total_loss = (
                 gap_loss
                 + self.loss_weights_dict["type"] * type_loss
+                + self.topology_head_weight * topology_head_loss
+                + self.disagreement_head_weight * disagreement_loss
                 + self.topology_weight * topology_loss
                 + self.entropy_weight * entropy_loss
                 + self.extremum_weight * extremum_loss
@@ -590,6 +773,8 @@ class SupervisedBandGapModel(keras.Model):
             total_loss,
             gap_loss,
             type_loss,
+            topology_head_loss,
+            disagreement_loss,
             topology_loss,
             entropy_loss,
             extremum_loss,
@@ -600,14 +785,30 @@ class SupervisedBandGapModel(keras.Model):
 
     def test_step(self, data):
         x, y, sample_weight = self._split_batch(data)
-        gap_pred, type_pred, topo_features, probs = self._forward(x, training=False)
-        pred = {"gap": gap_pred, "type": type_pred}
+        (
+            gap_pred,
+            type_pred,
+            topology_pred,
+            disagreement_pred,
+            topo_features,
+            probs,
+        ) = self._forward(x, training=False)
+        pred = {
+            "gap": gap_pred,
+            "type": type_pred,
+            "topology": topology_pred,
+            "disagreement": disagreement_pred,
+        }
         gap_loss = self.gap_loss_fn(y["gap"], gap_pred)
         type_loss = self._weighted_type_loss(y["type"], type_pred, sample_weight)
+        topology_head_loss = self._three_class_loss(y, "topology", topology_pred)
+        disagreement_loss = self._binary_loss(y, "disagreement", disagreement_pred)
         topology_loss, entropy_loss, extremum_loss = self._auxiliary_losses(x, y["type"], topo_features, probs)
         total_loss = (
             gap_loss
             + self.loss_weights_dict["type"] * type_loss
+            + self.topology_head_weight * topology_head_loss
+            + self.disagreement_head_weight * disagreement_loss
             + self.topology_weight * topology_loss
             + self.entropy_weight * entropy_loss
             + self.extremum_weight * extremum_loss
@@ -616,6 +817,8 @@ class SupervisedBandGapModel(keras.Model):
             total_loss,
             gap_loss,
             type_loss,
+            topology_head_loss,
+            disagreement_loss,
             topology_loss,
             entropy_loss,
             extremum_loss,
@@ -898,6 +1101,50 @@ def _manifest_state_path(manifest: Dict[str, object], label: str) -> Path:
 
 def validate_inner_selection_manifest(output_dir: str) -> Dict[str, object]:
     return _validate_inner_selection_manifest(output_dir)
+
+
+def evaluate_three_tasks(
+    labels: Dict[str, np.ndarray],
+    preds: Dict[str, np.ndarray],
+    groups: np.ndarray,
+    n_boot: int = 500,
+    random_state: int = 42,
+) -> Dict[str, object]:
+    """P0A/D: three-task benchmark on the frozen outer test.
+
+    Primary results per the P0 reframing; line-mode gap MAE is NOT among
+    them (it lives in the legacy regression section of the report).
+    """
+    from src.evaluation.bootstrap_stratify import (
+        group_bootstrap_ci,
+        summarize_task,
+    )
+
+    out: Dict[str, object] = {}
+    tasks = {
+        "line_mode_topology": ("topology", 3),
+        "provider_global_electronic_type": ("type", 3),
+        "line_global_disagreement": ("disagreement", 2),
+    }
+    for name, (pred_key, n_classes) in tasks.items():
+        y_true = np.asarray(labels.get(name), dtype=np.int32)
+        y_prob = np.asarray(preds.get(pred_key))
+        if y_true is None or y_prob is None:
+            out[name] = {"error": "labels unavailable"}
+            continue
+        y_pred = np.argmax(y_prob, axis=1).astype(np.int32)
+        valid = y_true >= 0
+        summary = summarize_task(
+            y_true[valid],
+            y_pred[valid],
+            groups[valid],
+            name,
+            n_classes,
+            n_boot=n_boot,
+            random_state=random_state,
+        )
+        out[name] = summary
+    return out
 
 
 def classification_scope_metrics(
@@ -1819,6 +2066,16 @@ def main() -> None:
         class_weights=class_weights,
         augment=args.augment,
         strain_scale=args.strain_scale,
+        y_topology=(
+            data["topology_train"][fit_idx]
+            if data.get("topology_train") is not None
+            else None
+        ),
+        y_disagreement=(
+            data["disagreement_train"][fit_idx]
+            if data.get("disagreement_train") is not None
+            else None
+        ),
     )
     val_ds = make_tf_dataset(
         data["X_train"][val_idx],
@@ -1826,6 +2083,16 @@ def main() -> None:
         data["type_train"][val_idx],
         args.batch_size,
         shuffle=False,
+        y_topology=(
+            data["topology_train"][val_idx]
+            if data.get("topology_train") is not None
+            else None
+        ),
+        y_disagreement=(
+            data["disagreement_train"][val_idx]
+            if data.get("disagreement_train") is not None
+            else None
+        ),
     )
 
     ssl_encoder = load_ssl_encoder(args.encoder, compile=False)
@@ -2144,6 +2411,23 @@ def main() -> None:
         data["material_ids_test"],
         mismatch_material_ids=mismatch_material_ids,
     )
+    # P0A/D: three-task benchmark on the frozen outer test (primary results).
+    three_task_labels = {
+        "line_mode_topology": data.get("topology_test"),
+        "provider_global_electronic_type": data.get("provider_test"),
+        "line_global_disagreement": data.get("disagreement_test"),
+    }
+    three_task_benchmark = evaluate_three_tasks(
+        three_task_labels,
+        {
+            "topology": pred_test.get("topology"),
+            "type": pred_test["type"],
+            "disagreement": pred_test.get("disagreement"),
+        },
+        data["groups_test"],
+        n_boot=500,
+        random_state=args.random_state,
+    )
     report_date_token = args.report_date or datetime.now().strftime("%Y%m%d")
     metrics_output_path = os.path.join(args.output_dir, "metrics_summary.json")
     predictions_output_path = os.path.join(args.output_dir, "ood_test_predictions.json")
@@ -2155,6 +2439,14 @@ def main() -> None:
         "report_date": report_date_token,
         "source": args.source,
         "tensor_npz": _portable_artifact_path(args.tensor_npz),
+        "primary_results": {
+            "note": "P0 reframing: the primary benchmark is the three-task suite "
+            "(line_mode_topology / provider_global_electronic_type / "
+            "line_global_disagreement). The line-mode gap MAE is reported as a "
+            "secondary learned-identity diagnostic, NOT a primary result.",
+            "three_task_benchmark": three_task_benchmark,
+            "seven_split_evaluation": "artifacts/reports/<experiment>/seven_split_evaluation.json (P0C/D)",
+        },
         "train_metrics": train_metrics,
         "ood_test_metrics": test_metrics,
         "classification_scope": classification_scope,
