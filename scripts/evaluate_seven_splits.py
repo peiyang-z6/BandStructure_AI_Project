@@ -135,6 +135,7 @@ def main() -> None:
     parser.add_argument("--manifest", required=True, help="ood_split_manifest.json")
     parser.add_argument("--splits", required=True, help="seven_splits_manifest.json")
     parser.add_argument("--labels", required=True, help="three_task_labels.npz")
+    parser.add_argument("--metadata", default=None, help="backfilled aflow_metadata.json (enriches aurl/prototype/species for stratification)")
     parser.add_argument("--model", required=True, help="frozen model weights .h5")
     parser.add_argument("--encoder", required=True, help="ssl encoder .keras")
     parser.add_argument("--norm", required=True, help="norm stats json")
@@ -153,6 +154,15 @@ def main() -> None:
     from src.models import load_ssl_encoder
 
     samples_by_id, splits, labels, label_ids, X, material_ids = load_inputs(args)
+    if args.metadata:
+        meta = json.load(open(args.metadata, encoding="utf-8"))
+        for rec in meta:
+            mid = str(rec.get("material_id") or "")
+            target = samples_by_id.get(mid)
+            if target is not None:
+                for field in ("aurl", "prototype", "species", "aflowlib_date"):
+                    if rec.get(field) not in (None, ""):
+                        target[field] = rec[field]
     aligned = align_labels_to_ids(labels, label_ids, material_ids)
     mean, std = load_norm_stats(args.norm)
     X_flat = (flatten_tensor(X) - mean) / std
