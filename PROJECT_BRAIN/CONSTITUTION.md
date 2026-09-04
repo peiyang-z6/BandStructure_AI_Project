@@ -1,7 +1,7 @@
 # BandStructure AI Project Constitution
 
-Version: 4.12
-Updated: 2026-09-03
+Version: 4.13
+Updated: 2026-09-04
 Status: active project rules
 
 ## 1. Mission
@@ -84,6 +84,17 @@ BandStructure_AI_Project/
 - composition/prototype/source overlap 必须与 space-group overlap 分开报告。
 - 旧 target-conditioned 结果永久标记为 legacy diagnostic，不得恢复为正式 baseline。
 
+### P0 科研基准（2026-09-04 起生效）
+
+- **主结果**：三任务分类基准 —— `line_mode_topology`（线模式路径可观察）、`provider_global_electronic_type`（uniform/DOS/数据库来源）、`line_global_disagreement`（预测二者冲突的二分类）。**line-mode gap MAE 不再作为主结果**，只作为 secondary learned-identity diagnostic 报告。
+- 三任务标签必须由冻结张量后处理派生（`scripts/derive_three_task_labels.py`），不重建历史张量、不改写 v4–v7 NPZ。
+- 监督模型含三个独立分类 head（topology / provider / disagreement）；provider head 不得混入 line-mode 规则先验。
+- **七类拆分固定**：random / space-group / composition / prototype / leave-element / source-protocol / temporal，全部 `random_state=42`、group-disjoint、manifest 落盘；P0 阶段采用 canonical space-group 拆分训练、冻结模型跨拆分评估；每类拆分的全量重训矩阵需单独批准。
+- **3 seeds {42, 2024, 7}**：每 seed 独立 experiment ID；汇总报告三任务 × 七拆分 × 3 seeds 的均值/方差。
+- **group bootstrap**：以 spacegroup 为 resampling 单元，报告 95% percentile CI；不得用 sample-level bootstrap 冒充 group-level 不确定性。
+- **错误分层**：至少按 provider type、spacegroup band、num_sites band、source catalog 四轴分层报告；disagreement 层必须单独给出。
+- 元数据回填（prototype/species/species_pp/aflowlib_date）遵循非空不回退；回填记录必须裁剪到 HDF5 现有 ID 集合。
+
 ## 6. Tensor Contract
 
 ```text
@@ -122,7 +133,7 @@ flattened input: (N, seq_len, 6)
 ### Supervised
 
 - 冻结早期 encoder 层，并冻结 supervised forward 不使用的 SSL projection/reconstruction heads 与 mask token；
-- 极值期望 gap head、type head 与审计明确的物理辅助损失；
+- 极值期望 gap head、**三个分类 head（type/provider、topology、disagreement）** 与审计明确的物理辅助损失；
 - 归一化统计只来自 inner-fit；
 - epoch loss/MAE/accuracy/Macro F1 必须用 stateful trackers 覆盖完整数据，canonical checkpoint/early stopping 监控 aggregate inner `val_loss`；
 - 必须分别保存 canonical best、final/last 与 accepted-restored-best，并在 outer access 前写入 bytes/SHA selection manifest；

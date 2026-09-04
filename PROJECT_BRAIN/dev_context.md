@@ -1,11 +1,12 @@
 # BandStructure AI Project — Dev Context
 
-Last updated: 2026-09-03
+Last updated: 2026-09-04
 Current root: `C:\Users\PeiYang\Documents\AI Project\BandStructure AI Project\BandStructure_AI_Project`
-Branch: `v6-metricfix-20260827`
+Branch: `v6-metricfix-20260827`（P0 起迁移为 `v7-60k-20260903`，见 Next Execution Steps）
 Pre-v6 audited snapshot commit: `025d5ce`
 Verified metric-fix code commit: `3c00aef4468a617a5bceec5b7262037d025baa63`
 v7 acceptance code commit: `ed783a8`
+P0 reframing code commit: `a2b281c`
 Code tags: `v6-metricfix-code-20260827`, `v6-metricfix-sync-20260828`, `v6-metricfix-sync-r2-20260828`, `v6-metricfix-sync-r3-20260828`, `v6-metricfix-sync-r4-20260828`, `v7-60k-final-acceptance-20260903`
 
 ## Current State
@@ -16,26 +17,25 @@ Code tags: `v6-metricfix-code-20260827`, `v6-metricfix-sync-20260828`, `v6-metri
 完整 line-mode E(k)
   → (N,2,128,3) 6D tensor + segment IDs
   → Transformer / Masked Band Modeling
-  → learned soft-extremum gap + metal/direct/indirect head
+  → learned soft-extremum gap + 三任务分类 head（topology / provider / disagreement）
   → tkinter Plot-to-Physics
 ```
 
 **`aflow_noleak_v7_60k_seed42` 为 latest accepted**（2026-09-03）：AFLOW 60,000 条（主通道 55,476 + 代理通道唯一 4,524 seed 42 抽样合并 = 60,000，metadata 60,000 ID 一致；张量 59,899 样本、101 条无边缘包络跳过已记录）。V100 GPU-only：SSL 50 epochs（early stopping）、监督 51 epochs（best epoch 31 by aggregate `val_loss`；best/last/accepted 冻结后 evaluation-only）。两次 GPU OOM（11,987 outer-test 全批量 reconstruct / extremum 热力图前向）已 TDD 修复（`4367f87`、`ed783a8`），全量回归 164 passed。产物回传 SHA-256 `9c46d1122be333ad903cff3eaab6fb802bc7f4c47ad3761051993b701d6cd45c` 校验一致，本地加载/前向通过，v4/v5/v6 immutable rehash 一致。
 
-v7 正式指标（11,987 outer，55 spacegroups，overlap=0）：line-mode MAE/RMSE `1.54e-05/5.54e-04 eV`（解析 baseline 0/0）、model-vs-global-DFT MAE `0.3767 eV`、type accuracy `0.9251`、Macro F1 `0.8788`、spacegroup-macro `0.9296`、mismatch accuracy `0.7441`（1,723 条）、MC raw 95% coverage `0.7974`。回归优于 v6、分类略降（60k 尾部样本更难），如实报告。
+### P0 科研基准重构（2026-09-04 启动，进行中）
 
-v6 正式指标（历史 accepted，6,019 outer）：learned line-mode MAE/RMSE `0.000407/0.007109 eV`（解析 baseline 0/0）、model-vs-global-DFT MAE `0.640244 eV`、type accuracy `0.958797`、Macro F1 `0.949251`、spacegroup-macro `0.965795`、mismatch accuracy `0.830549`、MC raw 95% coverage `0.803954`。
+用户 P0 指令：line-mode gap MAE 退出主结果位；标签拆为三任务；3 seeds + group bootstrap + 错误分层；固定七类拆分；README 清理；分支改名。完整方案：`PROJECT_BRAIN/agent_logs/20260903_P0_scientific_reframing_plan.md`；宪法 4.13（§5 P0 科研基准条款）。
 
-### Phase 6 启动
+已完成（本地，commit `a2b281c` + `78174c2`，196 passed）：
 
-Phase 6 启动：完成环境固化、GUI 状态持久化、CV 不确定性估计，并建立文献挖掘 Pipeline 原型。
-
-- **P0 环境固化**：`requirements.txt` 全部核心依赖 `==` 实测锁定（tensorflow==2.21.0, keras==3.15.1, mp-api==0.46.4, emmet-core==0.87.1 等 27 项，与 v6 验收运行时一致）；`environment.yml` = `conda env export --no-builds` 全量快照（27 conda + 120 pip）。验证：pin 与 pip freeze 逐项一致、`pip check` 干净。
-- **P1 GUI 状态持久化**：`gui_workbench.py` 内 `WorkbenchStateStore`（`data/annotations/workbench_state/`，图像内容 SHA-256 寻址，原子写）；标注/定标/材料信息 800ms 防抖自动保存 + 换图/关闭保存 + 同图重开自动恢复。宪法 §9（tkinter only）下选择后端 JSON 缓存分支。
-- **P2 CV 置信度**：`multi_format_parser.py` 聚合 `cv_quality`（0–1 分 + green/yellow/red；detector 权重缺失时 `optional_missing_score_excluded`）；`brain_invoker.py` `compute_brain_uncertainty`（熵 + 极值峰锐度 + gap 合理性；明确不用 MC-Dropout）；GUI 右侧质量指示灯 + 黄/红警告文案。
-- **P3 文献挖掘**：`literature_mining_pipeline.py` 原地升级——PDF 页内图 + PNG/JPG/JPEG/BMP 直接遍历；记录含 CV/脑置信度；h5 attrs `cv_confidence`；《文献挖掘摘要报告》统计成功提取率、平均置信度、潜在 Direct Gap 材料数量。输出默认 `data/raw/experimental/experimental_bands.h5`（宪法 §3 兼容，不建根级 `data_cache/`——用户已批准）。
-- **附带**：latest-model 指针（brain_invoker 默认路径 / GUI t-SNE / smoke_latest_model）v5→v6 并更新测试期望。
-- TDD：新增 `tests/test_workbench_state.py`（7）、`tests/test_cv_confidence.py`（6）、`tests/test_literature_mining.py`（5），全部 RED→GREEN。
+- **P0A 三任务标签**：`derive_line_mode_topology` / `derive_provider_global_type` / `derive_line_global_disagreement` 纯函数（ood_tensor_builder）+ `scripts/derive_three_task_labels.py`（冻结张量后处理派生，不改 v4–v7 NPZ）。实测 59,899 全样本覆盖：line_mode_topology {metal 47,333 / direct 3,739 / indirect 8,827}；provider type {40,234 / 5,769 / 13,896}；disagreement {agree 52,481 / conflict 7,418}。产物 `three_task_labels.npz` + `three_task_labels_report.json` 已落盘 tensor 目录。
+- **P0B 元数据回填**：`scripts/backfill_aflow_metadata_fields.py`（AFLUX `prototype()/species()/species_pp()/aflowlib_date()` 请求，207 页全量；非空不回退；合并后裁剪回 60,000 HDF5 ID）。实测 coverage 58,250/60,000（四个字段一致）。修复了一个 URL 缺 `?` 的 bug（三次后台失败根因，回归测试锁定）。
+- **P0C 七拆分**：`src/data/benchmark_splits.py` + `scripts/build_seven_splits.py`；实测 random/space_group/composition/prototype/leave_element 各 47,919/11,980；source_protocol 59,359/540（aurl 目录分布极端偏斜：ICSD_WEB 34,798 / LIB3_WEB 24,630 / LIB1_WEB 567 / LIB2_WEB 5）；temporal 48,269/11,630（按 aflowlib_date 时间戳分位数，双峰年份分布使按年切不可行）。manifest `seven_splits_manifest.json` + 紧凑版 `seven_splits_test_ids.json`。
+- **P0D 评估**：`src/evaluation/bootstrap_stratify.py`（spacegroup-level group bootstrap 95% CI、macro accuracy、错误分层四轴）；`scripts/evaluate_seven_splits.py`（冻结模型跨拆分三任务评估，分块前向）；`finetune_supervised.py` 内 `evaluate_three_tasks` 接入 metrics_summary 的 `primary_results` 段。
+- **模型三 head**：`SupervisedBandGapModel` 增加 `topology_head`（3 类）+ `disagreement_head`（2 类）；type head 作为 provider head 保持纯净（`topology_rule_weight` 默认 0，规则先验只喂 topology head）；`make_tf_dataset` 支持三任务标签；`load_dataset` 从 sidecar `three_task_labels.npz` 按 material_id 对齐加载。smoke 测试用 `skip_mismatch` 兼容 v7 冻结权重。
+- **P0E 文档**：README 折叠为单一「当前状态」+「历史里程碑」表；科学边界 7 条更新；宪法 4.13；dev_context 本段。
+- 待办：服务器 3 seeds {42, 2024, 7} 全链训练（~12h V100）→ 冻结模型七拆分评估 + 3-seed 汇总报告 → 分支 `v6-metricfix-20260827` → `v7-60k-20260903`。
 
 ## Why v6 Is Required
 
@@ -164,20 +164,15 @@ PNG 以 1600×1500 重渲染并完成视觉检查；主图、四卡片、footer 
 
 ## Next Execution Steps
 
-1. 完成 final full pytest、diff/line endings、immutable hash gate；
-2. 形成 v6 metric-fix canonical commit/tag；
-3. 生成 secret-excluded core sync manifest/archive；
-4. staging 上传、逐文件回验、远端 compile/full pytest；
-5. V100 一轮 SSL/supervised smoke；
-6. 新 ID 下完整 SSL → supervised train-only → evaluation-only；
-7. 回传 v6 models/checkpoints/logs/predictions/reports/manifests；
-8. 本地重算 metrics、模型加载/forward、v4/v5 rehash；
-9. 全部通过后才 promote v6，并更新 dated schedule/final report。
+1. 服务器传输 P0 更新脚本（finetune_supervised 三 head 版 + evaluate_seven_splits + bootstrap_stratify + 标签/拆分产物）；
+2. 3 seeds {42, 2024, 7} 全链训练（SSL + supervised train-only + evaluation-only，~12h V100）；
+3. 每 seed 冻结模型跑 `evaluate_seven_splits.py`（三任务 × 七拆分 + group bootstrap + 错误分层）；
+4. 汇总 3-seed 报告（三任务 × 七拆分 × 3 seeds 均值/方差）；
+5. 分支 `v6-metricfix-20260827` → `v7-60k-20260903`（本地改名 + push + 删旧远程分支，origin 默认不动）。
 
 ## Current Blockers / Deferred Scope
 
-- v6 正式训练尚未完成；
-- 只有 seed=42；3-seed 与 group-bootstrap 留到新日程；
+- P0 3-seed 训练尚未在服务器执行（代码已就绪）；
 - Phase C crystal structure schema、统一 k-path、multi-band target 与新 OOD 合同尚未冻结；
 - Materials Project 正式双源仍受出口网络封禁；
 - 当前模型仍是 E(k) analyzer，不是 structure→bands predictor。
