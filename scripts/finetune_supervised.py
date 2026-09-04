@@ -1130,6 +1130,33 @@ def save_roc_curves(type_true: np.ndarray, type_pred: np.ndarray, output_path: s
     return aucs
 
 
+def extremum_probabilities_chunks(
+    model: keras.Model,
+    X_norm: np.ndarray,
+    chunk_size: int = 1024,
+):
+    """Chunked wrapper for model.extremum_probabilities (v7 OOM fix #2).
+
+    The full-batch call allocated (N, 4, 128, 128) attention softmax tensors
+    for N = 11,987 outer-test samples. Chunking is output-identical in
+    inference mode (LayerNorm/attention are per-sample).
+    """
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+    topo_chunks = []
+    prob_chunks = []
+    for start in range(0, len(X_norm), chunk_size):
+        topo, probs = model.extremum_probabilities(
+            tf.constant(X_norm[start : start + chunk_size], dtype=tf.float32),
+            training=False,
+        )
+        topo_chunks.append(np.asarray(topo))
+        prob_chunks.append(np.asarray(probs))
+    if not topo_chunks:
+        raise ValueError("extremum_probabilities_chunks received an empty batch")
+    return np.concatenate(topo_chunks, axis=0), np.concatenate(prob_chunks, axis=0)
+
+
 def save_extremum_probability_heatmaps(
     model: keras.Model,
     X_norm: np.ndarray,
@@ -1140,9 +1167,7 @@ def save_extremum_probability_heatmaps(
     max_examples: int = 8,
 ) -> None:
     """Visualize P_vbm and P_cbm so reviewers can inspect learned extrema."""
-    topo_features, probs = model.extremum_probabilities(tf.constant(X_norm, dtype=tf.float32), training=False)
-    topo_features = topo_features.numpy()
-    probs = probs.numpy()
+    topo_features, probs = extremum_probabilities_chunks(model, X_norm)
     pred_cls = np.argmax(type_pred, axis=1)
     type_names = ["metal", "direct", "indirect"]
     order = np.argsort(topo_features[:, 0])

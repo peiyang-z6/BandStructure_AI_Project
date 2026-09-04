@@ -89,3 +89,54 @@ def test_reconstruct_raw_tensors_uses_chunked_path():
         # identity stats: denormalized output equals raw input reshaped
         expected = x.reshape(2300, 128, 2, 3).transpose(0, 2, 1, 3)
         np.testing.assert_allclose(recon, expected * 2.0, rtol=0, atol=1e-6)
+
+
+def _fake_extremum_model():
+    import tensorflow as tf
+
+    class FakeExtremumModel:
+        def __init__(self):
+            self.calls = []
+
+        def extremum_probabilities(self, x, training=False):
+            self.calls.append(int(x.shape[0]))
+            return tf.constant(x[:, :, :2] * 1.0), tf.constant(x[:, :, :2] * 0.5)
+
+    return FakeExtremumModel()
+
+
+def test_extremum_probabilities_chunks_never_exceed_batch_limit():
+    from scripts.finetune_supervised import extremum_probabilities_chunks
+
+    model = _fake_extremum_model()
+    x = np.random.RandomState(4).rand(11_987, 128, 6).astype(np.float32)
+    topo, probs = extremum_probabilities_chunks(model, x, chunk_size=1024)
+    assert max(model.calls) <= 1024
+    assert sum(model.calls) == len(x)
+    assert topo.shape == (len(x), 128, 2)
+    assert probs.shape == (len(x), 128, 2)
+
+
+def test_extremum_probabilities_chunks_equal_full_batch():
+    from scripts.finetune_supervised import extremum_probabilities_chunks
+
+    model = _fake_extremum_model()
+    x = np.random.RandomState(5).rand(700, 128, 6).astype(np.float32)
+    topo_c, probs_c = extremum_probabilities_chunks(model, x, chunk_size=256)
+    import tensorflow as tf
+
+    topo_f, probs_f = model.extremum_probabilities(
+        tf.constant(x, dtype=tf.float32), training=False
+    )
+    np.testing.assert_allclose(topo_c, topo_f.numpy(), rtol=0, atol=0)
+    np.testing.assert_allclose(probs_c, probs_f.numpy(), rtol=0, atol=0)
+
+
+def test_extremum_probabilities_chunks_rejects_nonpositive_chunk_size():
+    from scripts.finetune_supervised import extremum_probabilities_chunks
+
+    model = _fake_extremum_model()
+    x = np.zeros((4, 128, 6), dtype=np.float32)
+    with pytest.raises(ValueError):
+        extremum_probabilities_chunks(model, x, chunk_size=0)
+
