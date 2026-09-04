@@ -39,7 +39,7 @@ if str(ROOT) not in sys.path:
 # ── Paths ──
 OUTPUT_DIR = ROOT / "artifacts" / "reports" / "gui_workbench"
 TRAINING_DATA_DIR = ROOT / "data" / "annotations" / "human"
-TSNE_IMAGE = ROOT / "artifacts" / "reports" / "aflow_noleak_v6_30k_seed42_metricfix" / "latent_tsne_spacegroups.png"
+TSNE_IMAGE = ROOT / "artifacts" / "reports" / "aflow_noleak_v7_60k_seed42" / "latent_tsne_spacegroups.png"
 DETECTOR_PATH = ROOT / "artifacts" / "models" / "vision_detector" / "band_plot_yolov8_pose_best.pt"
 WORKBENCH_STATE_DIR = ROOT / "data" / "annotations" / "workbench_state"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

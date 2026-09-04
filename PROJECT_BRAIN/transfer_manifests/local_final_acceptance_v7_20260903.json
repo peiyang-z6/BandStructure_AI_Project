@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-09-04T15:10:00+00:00",
+  "experiment_id": "aflow_noleak_v7_60k_seed42",
+  "status": "latest accepted",
+  "source_tag": "v7-60k-final-acceptance-20260903",
+  "source_commit": "ed783a8",
+  "return_archive": {
+    "path": "C:/Users/PeiYang/AppData/Local/Temp/v7_artifacts_20260903.tar.gz",
+    "bytes": 68560133,
+    "sha256": "9c46d1122be333ad903cff3eaab6fb802bc7f4c47ad3761051993b701d6cd45c",
+    "member_verification": "local sha256sum matches server-side sha256sum"
+  },
+  "remote_evidence": {
+    "gpu": "Tesla V100-SXM2-16GB x2",
+    "gpu_only": true,
+    "ssl": "50 epochs recorded, early stopping",
+    "supervised_train_only": "51 epochs recorded, best_epoch=31 by aggregate inner val_loss, best/last/accepted frozen before outer access",
+    "evaluation_only": "completed after two OOM fixes (chunked reconstruct + chunked extremum heatmaps)",
+    "oom_fix_commits": ["4367f87", "ed783a8"]
+  },
+  "local_evidence": {
+    "full_pytest": "164 passed in 26.52s",
+    "pointer_tests": "test_project_layout.py 10 passed",
+    "model_load_forward": "finite gaps, type probability sums 1.0",
+    "selection_manifest": {
+      "monitor": "val_loss",
+      "best_epoch": 31,
+      "outer_accessed": false
+    },
+    "immutable_v4_v5_v6_rehash": "matched frozen baselines (v5 inventory + v6 acceptance hashes)"
+  },
+  "outer_metrics_11987": {
+    "line_mode_gap_mae_ev": 1.5414285371662118e-05,
+    "line_mode_gap_rmse_ev": 0.0005544362938962877,
+    "analytic_identity_baseline_mae_ev": 0.0,
+    "model_vs_global_dft_mae_ev": 0.37667253613471985,
+    "type_accuracy": 0.9250855093017436,
+    "type_macro_f1": 0.8788473008801563,
+    "spacegroup_macro_accuracy": 0.9296037466173998,
+    "mismatch_accuracy": 0.7440510737086478,
+    "mc_raw_95_coverage": 0.7973638107950279,
+    "negative_predicted_gap_rate": 0.0,
+    "supervised_physics_score": 1.0,
+    "num_test": 11987,
+    "num_test_groups": 55,
+    "group_overlap": 0
+  },
+  "dataset": {
+    "snapshot": "data/raw/aflow/snapshots/aflow_60000_20260831",
+    "h5_groups": 60000,
+    "merge": "55,476 main + 4,524 proxy-only (seed 42 sample) = 60,000 exactly",
+    "merge_manifest": "data/raw/aflow/snapshots/aflow_60000_20260831/merge_to_60000_manifest.json",
+    "metadata_ids": 60000,
+    "tensor_samples": 59899,
+    "skipped_no_envelope": 101,
+    "ood_dir": "data/processed/aflow/ood_tensors_v7_60000_seed42",
+    "split": "spacegroup 80/20 seed 42, overlap 0"
+  }
+}

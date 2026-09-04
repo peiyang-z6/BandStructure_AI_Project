@@ -106,10 +106,10 @@ class PhysicsBrainInvoker:
 
     def __init__(
         self,
-        encoder_path: str = "artifacts/models/aflow_noleak_v6_30k_seed42_metricfix/ssl_mbm_pretrained.keras",
-        weights_path: str = "artifacts/models/aflow_noleak_v6_30k_seed42_metricfix/finetuned.weights.h5",
-        norm_path: str = "artifacts/models/aflow_noleak_v6_30k_seed42_metricfix/ssl_mbm_norm_stats.json",
-        config_path: str = "artifacts/models/aflow_noleak_v6_30k_seed42_metricfix/finetuned_config.json",
+        encoder_path: str = "artifacts/models/aflow_noleak_v7_60k_seed42/ssl_mbm_pretrained.keras",
+        weights_path: str = "artifacts/models/aflow_noleak_v7_60k_seed42/finetuned.weights.h5",
+        norm_path: str = "artifacts/models/aflow_noleak_v7_60k_seed42/ssl_mbm_norm_stats.json",
+        config_path: str = "artifacts/models/aflow_noleak_v7_60k_seed42/finetuned_config.json",
     ) -> None:
         self.encoder_path = Path(encoder_path)
         self.weights_path = Path(weights_path)

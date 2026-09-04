@@ -12,13 +12,13 @@ if str(ROOT) not in sys.path:
 from scripts.finetune_supervised import SupervisedBandGapModel, load_dataset
 from src.models import load_ssl_encoder
 
-EXPERIMENT_ID = "aflow_noleak_v6_30k_seed42_metricfix"
+EXPERIMENT_ID = "aflow_noleak_v7_60k_seed42"
 TENSOR_NPZ = (
     ROOT
     / "data"
     / "processed"
     / "aflow"
-    / "ood_tensors_v5_30000_seed42"
+    / "ood_tensors_v7_60000_seed42"
     / "band_tensors_ood_split.npz"
 )
 MODEL_DIR = ROOT / "artifacts" / "models" / EXPERIMENT_ID

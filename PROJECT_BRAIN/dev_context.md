@@ -1,11 +1,12 @@
 # BandStructure AI Project — Dev Context
 
-Last updated: 2026-08-28
+Last updated: 2026-09-03
 Current root: `C:\Users\PeiYang\Documents\AI Project\BandStructure AI Project\BandStructure_AI_Project`
 Branch: `v6-metricfix-20260827`
 Pre-v6 audited snapshot commit: `025d5ce`
 Verified metric-fix code commit: `3c00aef4468a617a5bceec5b7262037d025baa63`
-Code tags: `v6-metricfix-code-20260827`, `v6-metricfix-sync-20260828`, `v6-metricfix-sync-r2-20260828`, `v6-metricfix-sync-r3-20260828`, `v6-metricfix-sync-r4-20260828`
+v7 acceptance code commit: `ed783a8`
+Code tags: `v6-metricfix-code-20260827`, `v6-metricfix-sync-20260828`, `v6-metricfix-sync-r2-20260828`, `v6-metricfix-sync-r3-20260828`, `v6-metricfix-sync-r4-20260828`, `v7-60k-final-acceptance-20260903`
 
 ## Current State
 
@@ -19,9 +20,11 @@ Code tags: `v6-metricfix-code-20260827`, `v6-metricfix-sync-20260828`, `v6-metri
   → tkinter Plot-to-Physics
 ```
 
-`aflow_noleak_v6_30k_seed42_metricfix` 已正式验收为 **latest accepted**：服务器 Tesla V100 GPU-only 完成 SSL 60 epochs + 监督 60 epochs（canonical aggregate `val_loss` best epoch 47），最终 artifact gate 与 model-brain manifest 已通过；产物回传（52 files / 74,071,297 bytes / SHA-256 `6735d815951b8081c114c11055ab8c5e122f1cc3ca466d0fc25c3145ef0a8184`）逐成员哈希匹配，本地模型加载/前向有限、概率和为 1，selection manifest 校验通过。
+**`aflow_noleak_v7_60k_seed42` 为 latest accepted**（2026-09-03）：AFLOW 60,000 条（主通道 55,476 + 代理通道唯一 4,524 seed 42 抽样合并 = 60,000，metadata 60,000 ID 一致；张量 59,899 样本、101 条无边缘包络跳过已记录）。V100 GPU-only：SSL 50 epochs（early stopping）、监督 51 epochs（best epoch 31 by aggregate `val_loss`；best/last/accepted 冻结后 evaluation-only）。两次 GPU OOM（11,987 outer-test 全批量 reconstruct / extremum 热力图前向）已 TDD 修复（`4367f87`、`ed783a8`），全量回归 164 passed。产物回传 SHA-256 `9c46d1122be333ad903cff3eaab6fb802bc7f4c47ad3761051993b701d6cd45c` 校验一致，本地加载/前向通过，v4/v5/v6 immutable rehash 一致。
 
-v6 正式指标（6,019 outer，独立重算）：learned line-mode MAE/RMSE `0.000407/0.007109 eV`（解析 baseline 0/0）、model-vs-global-DFT MAE `0.640244 eV`、type accuracy `0.958797`、Macro F1 `0.949251`、spacegroup-macro `0.965795`、mismatch accuracy `0.830549`、MC raw 95% coverage `0.803954`。
+v7 正式指标（11,987 outer，55 spacegroups，overlap=0）：line-mode MAE/RMSE `1.54e-05/5.54e-04 eV`（解析 baseline 0/0）、model-vs-global-DFT MAE `0.3767 eV`、type accuracy `0.9251`、Macro F1 `0.8788`、spacegroup-macro `0.9296`、mismatch accuracy `0.7441`（1,723 条）、MC raw 95% coverage `0.7974`。回归优于 v6、分类略降（60k 尾部样本更难），如实报告。
+
+v6 正式指标（历史 accepted，6,019 outer）：learned line-mode MAE/RMSE `0.000407/0.007109 eV`（解析 baseline 0/0）、model-vs-global-DFT MAE `0.640244 eV`、type accuracy `0.958797`、Macro F1 `0.949251`、spacegroup-macro `0.965795`、mismatch accuracy `0.830549`、MC raw 95% coverage `0.803954`。
 
 ### Phase 6 启动
 

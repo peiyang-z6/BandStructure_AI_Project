@@ -12,6 +12,24 @@
 
 后续经批准的扩展方向是**在现有链路上**增加 crystal graph → multi-band Eₙ(k)、DFT 质检/相似检索和不确定性主动学习，不建立并列冗余框架。
 
+## 当前状态（2026-09-03 v7 60k 最终验收：latest accepted）
+
+`aflow_noleak_v7_60k_seed42` 已正式验收为 **latest accepted**：AFLOW 数据扩容至 **60,000 条**（55,476 主通道 + 4,524 代理通道唯一记录按 seed 42 抽样合并，恰好 60,000；metadata ID 一致；张量 59,899 样本，101 条无边缘包络跳过并记录）。服务器 Tesla V100 GPU-only 完成 SSL（50 epochs，early stopping）+ 监督（51 epochs，best epoch 31 by aggregate `val_loss`；best/last/accepted 冻结后 evaluation-only）。训练中出现两次 GPU OOM（11,987 outer-test 全批量前向），已 TDD 修复（commit `4367f87`、`ed783a8`，分块前向），全量回归 164 passed。产物已回传并 SHA-256 校验（`9c46d1122be333ad903cff3eaab6fb802bc7f4c47ad3761051993b701d6cd45c`），本地模型加载/前向通过，v4/v5/v6 immutable rehash 一致。
+
+| 项目 | v7 正式值（11,987 outer） | v6 参考（6,019 outer） |
+|---|---:|---:|
+| learned line-mode MAE / RMSE | **1.54e-05 / 5.54e-04 eV** | 0.000407 / 0.007109 |
+| analytic identity baseline | **0 / 0 eV** | 0 / 0 |
+| model vs global DFT MAE | **0.3767 eV** | 0.6402 |
+| type accuracy / Macro F1 | **0.9251 / 0.8788** | 0.9588 / 0.9493 |
+| spacegroup-macro accuracy | **0.9296** | 0.9658 |
+| mismatch accuracy（1,723 / 1,257） | **0.7441** | 0.8305 |
+| MC raw 95% coverage | **0.7974** | 0.8040 |
+
+回归指标显著优于 v6（样本翻倍）；分类指标略降——60k 尾部新增样本分类难度更高（mismatch 层从 1,257 增至 1,723），如实报告。详情见 `artifacts/reports/aflow_noleak_v7_60k_seed42/v7_final_training_report.md` 与 `PROJECT_BRAIN/transfer_manifests/local_final_acceptance_v7_20260903.json`。
+
+- **[附带] latest-model 指针 v6→v7**：`brain_invoker` 默认路径、GUI t-SNE 图、`smoke_latest_model.py` 指向 `aflow_noleak_v7_60k_seed42`，测试期望同步更新。
+
 ## 环境固化（2026-08-31 Phase 6 P0）
 
 - `requirements.txt`：全部核心依赖以 `==` 锁定到实测版本（`tensorflow==2.21.0`、`keras==3.15.1`、`mp-api==0.46.4`、`emmet-core==0.87.1` 等 27 项），与 v6 验收运行时一致；

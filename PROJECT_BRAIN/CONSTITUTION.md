@@ -1,7 +1,7 @@
 # BandStructure AI Project Constitution
 
-Version: 4.11
-Updated: 2026-08-31
+Version: 4.12
+Updated: 2026-09-03
 Status: active project rules
 
 ## 1. Mission
@@ -49,7 +49,7 @@ BandStructure_AI_Project/
 └── PROJECT_BRAIN/
 ```
 
-- `aflow_noleak_v6_30k_seed42_metricfix` 为 latest accepted（GPU-only、aggregate `val_loss` 选模、best/last/accepted 三态冻结、最终 content gate + model-brain manifest 通过）。`aflow_noleak_v5_30k_seed42` 保留为 immutable historical run；2026-08-27 审计确认其 supervised checkpoint selection 只代表最后 20 条 validation 样本，不能继续作为无保留的科学 latest accepted。`aflow_noleak_v4_seed42` 继续作为 immutable baseline。
+- `aflow_noleak_v7_60k_seed42` 为 latest accepted（2026-09-03：60,000 条 AFLOW、V100 GPU-only、SSL 50 epochs + 监督 51 epochs（best epoch 31 by aggregate `val_loss`）、best/last/accepted 冻结后 evaluation-only、两次 GPU OOM 已 TDD 分块修复、产物回传 SHA 校验一致）。`aflow_noleak_v6_30k_seed42_metricfix` 转为历史 accepted 保留为 immutable（GPU-only、aggregate `val_loss` 选模、best/last/accepted 三态冻结、最终 content gate + model-brain manifest 通过）。`aflow_noleak_v5_30k_seed42` 保留为 immutable historical run；2026-08-27 审计确认其 supervised checkpoint selection 只代表最后 20 条 validation 样本，不能继续作为无保留的科学 latest accepted。`aflow_noleak_v4_seed42` 继续作为 immutable baseline。
 - 不重新创建根级 `data_cache/`、`models/`、`checkpoints/`、`reports/` 或 `logs/`。
 - `src` 的现有责任边界优先于新建平行模块；入口脚本保持稳定，确需移动时必须先加路径回归测试。
 - 临时文件、远程连接脚本、`__pycache__`、`.pytest_cache`、下载归档和迁移 quarantine 不得留在最终运行根目录。
