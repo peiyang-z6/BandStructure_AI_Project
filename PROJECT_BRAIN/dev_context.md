@@ -2,7 +2,7 @@
 
 Last updated: 2026-09-04
 Current root: `C:\Users\PeiYang\Documents\AI Project\BandStructure AI Project\BandStructure_AI_Project`
-Branch: `v6-metricfix-20260827`（P0 起迁移为 `v7-60k-20260903`，见 Next Execution Steps）
+Branch: `v7-60k-20260903`（P0 起由 `v6-metricfix-20260827` 改名，与 v7 状态对齐）
 Pre-v6 audited snapshot commit: `025d5ce`
 Verified metric-fix code commit: `3c00aef4468a617a5bceec5b7262037d025baa63`
 v7 acceptance code commit: `ed783a8`
@@ -164,11 +164,11 @@ PNG 以 1600×1500 重渲染并完成视觉检查；主图、四卡片、footer 
 
 ## Next Execution Steps
 
-1. 服务器传输 P0 更新脚本（finetune_supervised 三 head 版 + evaluate_seven_splits + bootstrap_stratify + 标签/拆分产物）；
-2. 3 seeds {42, 2024, 7} 全链训练（SSL + supervised train-only + evaluation-only，~12h V100）；
+1. ✅ 服务器传输 P0 更新脚本与数据产物（litterbox 中转，MD5 双向校验一致）；
+2. ⏳ 3 seeds {42, 2024, 7} 全链训练中（`/home/zhao/p0_launch_3seeds.sh`，日志 `/home/zhao/p0_train_chain.log`）；
 3. 每 seed 冻结模型跑 `evaluate_seven_splits.py`（三任务 × 七拆分 + group bootstrap + 错误分层）；
 4. 汇总 3-seed 报告（三任务 × 七拆分 × 3 seeds 均值/方差）；
-5. 分支 `v6-metricfix-20260827` → `v7-60k-20260903`（本地改名 + push + 删旧远程分支，origin 默认不动）。
+5. ✅ 分支已本地改名 `v7-60k-20260903`（远程推送与旧分支删除待 GitHub 凭据解除后执行）。
 
 ## Current Blockers / Deferred Scope
 
