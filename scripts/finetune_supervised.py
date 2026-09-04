@@ -1179,8 +1179,39 @@ def denormalize_sequence(X_norm: np.ndarray, norm_path: str) -> np.ndarray:
     return seq.reshape(seq.shape[0], seq.shape[1], 2, channels_per_band).transpose(0, 2, 1, 3)
 
 
-def reconstruct_raw_tensors(model: keras.Model, X_norm: np.ndarray, norm_path: str) -> np.ndarray:
-    recon_norm = model.encoder.reconstruct(X_norm, training=False).numpy()
+def reconstruct_encoder_chunks(
+    model: keras.Model,
+    X_norm: np.ndarray,
+    chunk_size: int = 1024,
+) -> np.ndarray:
+    """Run encoder.reconstruct in bounded chunks to keep GPU memory flat.
+
+    v7 OOM regression: full-batch reconstruct of the outer test (11,987
+    samples) allocated a (11987, 4, 128, 128) attention softmax per layer and
+    exhausted the 16 GB V100. Chunking is output-identical (LayerNorm/attention
+    are per-sample in inference mode).
+    """
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+    chunks = []
+    for start in range(0, len(X_norm), chunk_size):
+        recon_chunk = model.encoder.reconstruct(
+            X_norm[start : start + chunk_size],
+            training=False,
+        ).numpy()
+        chunks.append(np.asarray(recon_chunk))
+    if not chunks:
+        raise ValueError("reconstruct_encoder_chunks received an empty batch")
+    return np.concatenate(chunks, axis=0)
+
+
+def reconstruct_raw_tensors(
+    model: keras.Model,
+    X_norm: np.ndarray,
+    norm_path: str,
+    chunk_size: int = 1024,
+) -> np.ndarray:
+    recon_norm = reconstruct_encoder_chunks(model, X_norm, chunk_size=chunk_size)
     return denormalize_sequence(recon_norm, norm_path)
 
 
