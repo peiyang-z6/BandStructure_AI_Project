@@ -169,9 +169,9 @@ PNG 以 1600×1500 重渲染并完成视觉检查；主图、四卡片、footer 
 
 ## Next Execution Steps
 
-P0 已完成。按宪法 5.0 §8 的 P1→P5 顺序：
+P0 已完成，P1 已完成。按宪法 5.0 §8 的 P1→P5 顺序：
 
-1. ⏳ **P1 结构 sidecar 补全**：为 60k AUID 逐个拉取 AFLOW REST 端点（`?geometry`/`?positions_fractional`/`?species`/`?dft_type`/`?spin_cell`/`?files`），写只读 sidecar（lattice/species/fractional_coordinates/functional/spin/结构 SHA），不改 immutable HDF5；
+1. ✅ **P1 结构 sidecar 补全**：`aflow_structure_sidecar.json`（60,000 记录，ID 与 HDF5 完全对齐；lattice/species/fractional_coordinates/functional/spin/势/倒格子/k-path/结构 SHA/kpoints_3d）。详见 `agent_logs/20260906_P1_structure_sidecar.md`；
 2. P2 跨模态检索基线（band encoder ↔ crystal graph encoder 对比学习 + ANN 索引）；
 3. P3 variable multi-band decoder（对比 Bandformer）；
 4. P4 校准不确定性 + 主动获取；
@@ -181,6 +181,6 @@ P0 已完成。按宪法 5.0 §8 的 P1→P5 顺序：
 ## Current Blockers / Deferred Scope
 
 - GitHub 远程分支推送（本地改名已完成；远程待 GitHub 凭据解除）；
-- P1 结构 sidecar 尚未实现（数据合同问题，非模型问题；AFLOW 端点已实测可达）；
+- P1 sidecar 39 个 `ICSD_WEB/HEX` 材料结构字段 AFLOW 端点 HTTP 500（源端缺陷，已按宪法 §4 标记 missing_fields，不伪造）；
 - Materials Project 正式双源仍受出口网络封禁；
 - 当前模型仍是 E(k) analyzer；结构→多能带是 P3 目标。
