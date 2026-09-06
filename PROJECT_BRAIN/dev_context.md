@@ -21,21 +21,26 @@ Code tags: `v6-metricfix-code-20260827`, `v6-metricfix-sync-20260828`, `v6-metri
   → tkinter Plot-to-Physics
 ```
 
-**`aflow_noleak_v7_60k_seed42` 为 latest accepted**（2026-09-03）：AFLOW 60,000 条（主通道 55,476 + 代理通道唯一 4,524 seed 42 抽样合并 = 60,000，metadata 60,000 ID 一致；张量 59,899 样本、101 条无边缘包络跳过已记录）。V100 GPU-only：SSL 50 epochs（early stopping）、监督 51 epochs（best epoch 31 by aggregate `val_loss`；best/last/accepted 冻结后 evaluation-only）。两次 GPU OOM（11,987 outer-test 全批量 reconstruct / extremum 热力图前向）已 TDD 修复（`4367f87`、`ed783a8`），全量回归 164 passed。产物回传 SHA-256 `9c46d1122be333ad903cff3eaab6fb802bc7f4c47ad3761051993b701d6cd45c` 校验一致，本地加载/前向通过，v4/v5/v6 immutable rehash 一致。
+**差异化方向（2026-09-06）**：跨模态"晶体结构 — 数值能带 — 论文/实验能带图像"模型，用于检索/匹配/可信拒识/主动 DFT 闭环。P1→P5 顺序见宪法 5.0 §8。P0（科研基准重构）已完成，下一步 P1 结构 sidecar 补全。
 
-### P0 科研基准重构（2026-09-04 启动，进行中）
+**`aflow_noleak_v7_60k_seed42` 为 latest accepted**（2026-09-03）：AFLOW 60,000 条（主通道 55,476 + 代理通道唯一 4,524 seed 42 抽样合并 = 60,000，metadata 60,000 ID 一致；张量 59,899 样本、101 条无边缘包络跳过已记录）。V100 GPU-only：SSL 50 epochs（early stopping）、监督 51 epochs（best epoch 31 by aggregate `val_loss`；best/last/accepted 冻结后 evaluation-only）。两次 GPU OOM 已 TDD 修复（`4367f87`、`ed783a8`），全量回归 199 passed。产物回传 SHA-256 校验一致，本地加载/前向通过，v4/v5/v6 immutable rehash 一致。
 
-用户 P0 指令：line-mode gap MAE 退出主结果位；标签拆为三任务；3 seeds + group bootstrap + 错误分层；固定七类拆分；README 清理；分支改名。完整方案：`PROJECT_BRAIN/agent_logs/20260903_P0_scientific_reframing_plan.md`；宪法 4.13（§5 P0 科研基准条款）。
+### P0 科研基准重构（已完成，2026-09-06）
 
-已完成（本地，commit `a2b281c` + `78174c2`，196 passed）：
+用户 P0 指令：line-mode gap MAE 退出主结果位；标签拆为三任务；3 seeds + group bootstrap + 错误分层；固定七类拆分；README 清理；分支改名。宪法 4.13 §5（已并入 5.0）。
 
-- **P0A 三任务标签**：`derive_line_mode_topology` / `derive_provider_global_type` / `derive_line_global_disagreement` 纯函数（ood_tensor_builder）+ `scripts/derive_three_task_labels.py`（冻结张量后处理派生，不改 v4–v7 NPZ）。实测 59,899 全样本覆盖：line_mode_topology {metal 47,333 / direct 3,739 / indirect 8,827}；provider type {40,234 / 5,769 / 13,896}；disagreement {agree 52,481 / conflict 7,418}。产物 `three_task_labels.npz` + `three_task_labels_report.json` 已落盘 tensor 目录。
-- **P0B 元数据回填**：`scripts/backfill_aflow_metadata_fields.py`（AFLUX `prototype()/species()/species_pp()/aflowlib_date()` 请求，207 页全量；非空不回退；合并后裁剪回 60,000 HDF5 ID）。实测 coverage 58,250/60,000（四个字段一致）。修复了一个 URL 缺 `?` 的 bug（三次后台失败根因，回归测试锁定）。
-- **P0C 七拆分**：`src/data/benchmark_splits.py` + `scripts/build_seven_splits.py`；实测 random/space_group/composition/prototype/leave_element 各 47,919/11,980；source_protocol 59,359/540（aurl 目录分布极端偏斜：ICSD_WEB 34,798 / LIB3_WEB 24,630 / LIB1_WEB 567 / LIB2_WEB 5）；temporal 48,269/11,630（按 aflowlib_date 时间戳分位数，双峰年份分布使按年切不可行）。manifest `seven_splits_manifest.json` + 紧凑版 `seven_splits_test_ids.json`。
-- **P0D 评估**：`src/evaluation/bootstrap_stratify.py`（spacegroup-level group bootstrap 95% CI、macro accuracy、错误分层四轴）；`scripts/evaluate_seven_splits.py`（冻结模型跨拆分三任务评估，分块前向）；`finetune_supervised.py` 内 `evaluate_three_tasks` 接入 metrics_summary 的 `primary_results` 段。
-- **模型三 head**：`SupervisedBandGapModel` 增加 `topology_head`（3 类）+ `disagreement_head`（2 类）；type head 作为 provider head 保持纯净（`topology_rule_weight` 默认 0，规则先验只喂 topology head）；`make_tf_dataset` 支持三任务标签；`load_dataset` 从 sidecar `three_task_labels.npz` 按 material_id 对齐加载。smoke 测试用 `skip_mismatch` 兼容 v7 冻结权重。
-- **P0E 文档**：README 折叠为单一「当前状态」+「历史里程碑」表；科学边界 7 条更新；宪法 4.13；dev_context 本段。
-- 待办：服务器 3 seeds {42, 2024, 7} 全链训练（~12h V100）→ 冻结模型七拆分评估 + 3-seed 汇总报告 → 分支 `v6-metricfix-20260827` → `v7-60k-20260903`。
+- **三任务标签**：`derive_line_mode_topology` / `derive_provider_global_type` / `derive_line_global_disagreement`（ood_tensor_builder）+ `scripts/derive_three_task_labels.py`（冻结张量后处理，不改 v4–v7 NPZ）。59,899 全样本覆盖；disagreement conflict 7,418（12.4%）。
+- **元数据回填**：`scripts/backfill_aflow_metadata_fields.py`，prototype/species/species_pp/aflowlib_date 覆盖 58,250/60,000。
+- **七拆分**：`src/data/benchmark_splits.py` + `scripts/build_seven_splits.py`，全部 seed 42、group-disjoint、manifest 落盘。
+- **评估**：`src/evaluation/bootstrap_stratify.py`（spacegroup 级 group bootstrap 95% CI + 错误分层四轴）；`scripts/evaluate_seven_splits.py`（冻结模型七拆分评估）；`scripts/aggregate_three_seed_results.py`（3-seed 汇总）。
+- **模型三 head**：`SupervisedBandGapModel` 增 topology_head（3 类）+ disagreement_head（2 类）；provider head 去规则先验。
+- **3 seeds {42, 2024, 7} 全链**（服务器 V100）完成。主结果（outer OOD 11,987，3-seed 均值）：line_mode_topology `0.9932±0.0016`、provider_global_electronic_type `0.9371±0.0062`、line_global_disagreement `0.9666±0.0016`。
+- **分支改名**：`v6-metricfix-20260827` → `v7-60k-20260903`（本地；远程推送待 GitHub 凭据解除）。
+- 全量回归 **199 passed**。产物见 `artifacts/reports/aflow_noleak_v7_60k_seed{42,2024,7}/`。
+
+### 方向调整（2026-09-06，用户批准改宪法）
+
+按 `Desktop/questions and directions.md` 调整开发方向。审计结论：文档四处"164 passed / 分支 v6"已过时（P0 后为 199 passed / 分支 v7-60k-20260903）；短板 4（HDF5 缺结构字段）属实；P1 结构 sidecar 的 AFLOW REST 端点实测可达（`?geometry`/`?positions_fractional`/`?species`/`?dft_type`/`?spin_cell`/`?files`，`?lattice` 404）。宪法升 5.0。完整审计：`PROJECT_BRAIN/agent_logs/20260906_direction_reframing_audit.md`。
 
 ## Why v6 Is Required
 
@@ -164,15 +169,18 @@ PNG 以 1600×1500 重渲染并完成视觉检查；主图、四卡片、footer 
 
 ## Next Execution Steps
 
-1. ✅ 服务器传输 P0 更新脚本与数据产物（litterbox 中转，MD5 双向校验一致）；
-2. ✅ 3 seeds {42, 2024, 7} 全链训练完成（SSL + supervised + evaluation-only + 七拆分评估）；
-3. ✅ 每 seed 冻结模型 `evaluate_seven_splits.py`（三任务 × 七拆分 + group bootstrap + 错误分层）；
-4. ✅ 3-seed 汇总报告 `three_seed_aggregate.json` + `P0_scientific_reframing_report.md`；
-5. ⏳ 分支已本地改名 `v7-60k-20260903`（远程推送与旧分支删除待 GitHub 凭据解除后执行）。
+P0 已完成。按宪法 5.0 §8 的 P1→P5 顺序：
+
+1. ⏳ **P1 结构 sidecar 补全**：为 60k AUID 逐个拉取 AFLOW REST 端点（`?geometry`/`?positions_fractional`/`?species`/`?dft_type`/`?spin_cell`/`?files`），写只读 sidecar（lattice/species/fractional_coordinates/functional/spin/结构 SHA），不改 immutable HDF5；
+2. P2 跨模态检索基线（band encoder ↔ crystal graph encoder 对比学习 + ANN 索引）；
+3. P3 variable multi-band decoder（对比 Bandformer）；
+4. P4 校准不确定性 + 主动获取；
+5. P5 外部验证集（MP/JARVIS source-OOD + 论文/ARPES 图像 + 新 DFT blind test）；
+6. ⏳ 分支远程推送（本地已改名 `v7-60k-20260903`；待 GitHub 凭据解除）。
 
 ## Current Blockers / Deferred Scope
 
 - GitHub 远程分支推送（本地改名已完成；远程待 GitHub 凭据解除）；
-- Phase C crystal structure schema、统一 k-path、multi-band target 与新 OOD 合同尚未冻结；
+- P1 结构 sidecar 尚未实现（数据合同问题，非模型问题；AFLOW 端点已实测可达）；
 - Materials Project 正式双源仍受出口网络封禁；
-- 当前模型仍是 E(k) analyzer，不是 structure→bands predictor。
+- 当前模型仍是 E(k) analyzer；结构→多能带是 P3 目标。

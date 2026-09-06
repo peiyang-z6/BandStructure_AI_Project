@@ -1,21 +1,25 @@
 # BandStructure AI Project Constitution
 
-Version: 4.13
-Updated: 2026-09-04
+Version: 5.0
+Updated: 2026-09-06
 Status: active project rules
 
 ## 1. Mission
 
-本项目构建物理约束的晶体能带 AI 流水线，大方向保持为：
+本项目构建物理约束的晶体能带 AI 流水线。**差异化核心方向**（2026-09-06 起）：
+
+> 建立"晶体结构 — 数值能带 — 论文/实验能带图像"的物理约束跨模态模型，用于检索、匹配、可信拒识与主动 DFT 闭环；structure→multi-band Eₙ(k) 预测是其中一个任务，而非全部卖点。
+
+具体大方向保持为：
 
 1. 从可追溯的数据源下载完整 line-mode E(k)；
 2. 构建固定形状 6D 能带张量与 group-disjoint OOD 划分；
 3. 使用 Masked Band Modeling 进行自监督预训练；
-4. 微调用于带隙回归和 metal/direct/indirect 分类；
+4. 微调用于带隙回归、三任务分类（line_mode_topology / provider_global_electronic_type / line_global_disagreement）；
 5. 通过原生 tkinter GUI 完成人工标定的 Plot-to-Physics 推理与训练数据回流；
-6. 在上述现有链路上逐步扩展 crystal graph→multi-band Eₙ(k)、DFT QA/检索与不确定性主动学习。
+6. 在现有链路上按 P1→P5 顺序扩展：结构 sidecar 补全（P1）、跨模态检索（P2）、variable multi-band decoder（P3）、校准不确定性 + 主动获取（P4）、外部验证集（P5）。
 
-允许系统性修复和兼容性升级，不得改写成与主链无关的独立模块集合。
+允许系统性修复和兼容性升级，不得改写成与主链无关的独立模块集合。禁止单纯为扩数据量而扩到 100k，禁止从头实现完整 DeepH 类哈密顿量网络——两者都偏离差异化定位。
 
 ## 2. Canonical Project Root and Protected Assets
 
@@ -147,18 +151,46 @@ flattened input: (N, seq_len, 6)
 
 pipeline 入口合同：`scripts/run_full_pipeline.py` 必须以脚本方式直接可启动（项目根在 `sys.path`）；最终 artifact 校验必须引用无 TensorFlow 依赖的轻量模块（`src/utils/selection_manifest.py`），不得在 gate 处动态导入训练脚本或依赖同名的第三方 `scripts` 包；evaluation-only 必须先恢复 frozen best 再 `compile(jit_compile=False)`。
 
-## 8. Phase C Extension Rules
+## 8. 跨模态扩展路线（P1–P5）
 
-Phase C 不得直接从“结构”跳到黑箱标量 gap。进入代码前必须先冻结：
+差异化定位（§1）要求按以下顺序扩展，每阶段有明确的前置冻结条件与退出标准；后续阶段不得在前置阶段验收前启动正式实现。
 
-- lattice、species、fractional coordinates 与 periodic neighbor graph；
-- spin/SOC/magnetism 与计算协议字段；
-- 统一 k-path 与 segment representation；
-- multi-band target、band ordering/degeneracy 与能量 reference；
-- structure/composition/prototype/source OOD；
-- 缺失字段与低质量标签隔离规则。
+### P1 结构 sidecar 补全
 
-Phase C 应复用现有 encoder/trainer/report/provenance 机制，现有 6D 模型继续作为 QA、检索和下游基线。
+- **不得修改既有 immutable HDF5**；新增只读配对 sidecar，按 material_id 关联。
+- sidecar 字段（至少）：lattice 3×3、species、fractional_coordinates、magnetic moments/spin/SOC、DFT functional/U/pseudopotential、reciprocal lattice、3D fractional k-points、k-path convention、source 与结构 SHA-256。
+- 数据来源：AFLOW REST 端点（`?geometry`/`?positions_fractional`/`?species`/`?dft_type`/`?spin_cell`/`?files` 实测可达；`?lattice` 404，用 `?geometry` 替代），按 AUID 逐个获取，不下载大文件。
+- 覆盖审计：sidecar 与 HDF5 的 material_id 集合必须一致；缺失/低质量字段隔离规则同宪法 §4 provenance。
+- 完成后 `structure` 相关字段才可进入 §6 之后的结构编码器。
+
+### P2 跨模态检索（优先于 multi-band 生成）
+
+- 保留当前 MBM 作为 band encoder；结构编码器复用 ALIGNN/MatGL/e3nn 类成熟 GNN，不从零发明。
+- 用 structure–band 对比学习在 60k 配对数据上对齐共享物理嵌入。
+- GUI/论文图像经人工定标或 CV 重建后送入同一 band encoder。
+- 建立 ANN 向量索引：上传一张能带图 → 返回最相似材料、结构与置信度。
+- 这是最快形成独特、可演示、可发表结果的一步，P2 通过后再进入 P3。
+
+### P3 variable multi-band decoder
+
+- 不固定为六条 band；用 mask 支持可变 band 数。
+- band 交换与 crossing 用 band-set matching（Hungarian/最优传输）处理。
+- 同时约束：segment continuity、高对称点简并、时间反演对称、VBM/CBM 位置、曲率/有效质量、metal/direct/indirect topology。
+- 在相同数据与拆分下正式对比 Bandformer，而非只与当前 v7 比。
+
+### P4 校准不确定性与主动获取
+
+- 用深度 ensemble 或异方差头估计不确定性；在独立 calibration split 上做 conformal calibration。
+- 报告 coverage、interval width、ECE/Brier、risk–coverage、错误拒识率。
+- 主动学习 acquisition 组合：校准不确定性、latent-space diversity、source/prototype novelty、预期物理信息增益。
+- 不得继续把当前 MC-dropout 方差直接当 DFT 选择依据。
+
+### P5 真实外部验证集
+
+- 至少三类外部证据：Materials Project/JARVIS source-OOD 数值能带、人工校准论文图像或公开 ARPES、少量新 DFT 计算作为时间后移 blind test。
+- 主指标包括 full-band MAE、extremum k-error、effective-mass error、Recall@K/mAP、open-set AUROC、校准覆盖率；不得只剩 gap 与三分类准确率。
+
+现有 6D 模型继续作为 QA、检索和下游基线；现有 encoder/trainer/report/provenance 机制复用。
 
 ## 9. GUI Rules
 

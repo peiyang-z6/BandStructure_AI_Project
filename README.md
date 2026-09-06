@@ -6,11 +6,11 @@
 完整 line-mode E(k)
   → (N, 2, 128, 3) 6D 物理张量
   → Masked Band Modeling 自监督预训练
-  → 带隙回归 + metal/direct/indirect 分类
+  → 带隙回归 + 三任务分类（line_mode_topology / provider_global_electronic_type / line_global_disagreement）
   → tkinter Plot-to-Physics 工作台
 ```
 
-后续经批准的扩展方向是**在现有链路上**增加 crystal graph → multi-band Eₙ(k)、DFT 质检/相似检索和不确定性主动学习，不建立并列冗余框架。
+**差异化核心方向（2026-09-06）**：建立"晶体结构 — 数值能带 — 论文/实验能带图像"的物理约束跨模态模型，用于检索、匹配、可信拒识与主动 DFT 闭环；structure→multi-band Eₙ(k) 预测是其中一个任务，而非全部卖点。开发顺序 P1→P5：结构 sidecar 补全（P1）、跨模态检索（P2）、variable multi-band decoder（P3）、校准不确定性 + 主动获取（P4）、外部验证集（P5）。详见宪法 §8 与 `PROJECT_BRAIN/agent_logs/20260906_direction_reframing_audit.md`。
 
 ## 当前状态
 
@@ -209,13 +209,14 @@ Materials Project 密钥只允许放在未跟踪文件 `configs/api_keys.env`。
 
 ## 当前科学边界
 
-1. 当前正式方向仍以已计算 E(k) 为输入，是能带分析/表征模型，不是未知晶体结构→完整能带或 DFT replacement。
+1. 当前正式方向仍以已计算 E(k) 为输入，是能带分析/表征模型；结构→多能带预测是 P3 阶段目标，尚未实现。
 2. line-mode gap target 是输入函数；解析 baseline MAE/RMSE 为 0，learned gap head 的误差只衡量 soft-extremum approximation。**P0 起 line-mode gap MAE 不再是主结果**；主结果是三任务（line_mode_topology / provider_global_electronic_type / line_global_disagreement）。
 3. v5 checkpoint selection 因 last-batch metric 无效（immutable historical）；v6/v7 均以 aggregate inner `val_loss` 为 canonical selection。
-4. 当前正式验收只有 seed=42；**P0 引入 3 seeds {42, 2024, 7} 与 spacegroup group-bootstrap 95% CI**，已实现于 `src/evaluation/bootstrap_stratify.py`，训练执行后生效。
-5. 当前正式 outer 是 space-group-disjoint OOD；**P0 固定七类拆分**（random / space-group / composition / prototype / leave-element / source-protocol / temporal，见 `src/data/benchmark_splits.py`），冻结模型跨拆分评估为 P0 阶段口径。
-6. provider/line-mode 冲突以三任务中的 `line_global_disagreement` 显式建模；报告必须给出 mismatch 分层性能。
-7. MC-dropout 必须同时报告 raw 95% interval coverage 与 tolerance diagnostic；后者不能称为校准置信区间。
+4. P0 已落地 3 seeds {42, 2024, 7} 与 spacegroup group-bootstrap 95% CI（`src/evaluation/bootstrap_stratify.py`）。
+5. P0 已固定七类拆分（random / space-group / composition / prototype / leave-element / source-protocol / temporal，见 `src/data/benchmark_splits.py`），冻结模型跨拆分评估。
+6. provider/line-mode 冲突以三任务中的 `line_global_disagreement` 显式建模（冲突率 12.4%）。
+7. MC-dropout raw 95% coverage 0.7974 尚不足以驱动主动学习（P4 才升级为校准不确定性）；当前不得把 MC 方差当 DFT 选择依据。
+8. HDF5 尚无 lattice/species/fractional_coordinates——结构字段缺失是 P1 的数据合同问题（审计见 `20260906_direction_reframing_audit.md`）。
 
 ## 不可破坏约束
 
@@ -224,10 +225,12 @@ Materials Project 密钥只允许放在未跟踪文件 `configs/api_keys.env`。
 - 不把 `资料/` 移入运行根目录；
 - 不提交/输出真实 API key；
 - outer test 不参与 early stopping、checkpoint、阈值或超参数选择；
-- 结构性修改必须同步 README、dev_context、CONSTITUTION 和日期日志。
+- 结构性修改必须同步 README、dev_context、CONSTITUTION 和日期日志；
+- 不修改既有 immutable HDF5（结构字段走只读 sidecar）；
+- 不单纯扩数据到 100k，不从零实现 DeepH 类哈密顿量网络。
 
 ## 下一阶段
 
-Phase B 已完成。Phase C 在执行任何代码前必须先冻结结构数据合同，随后在现有 encoder/trainer/report 链路上增加 crystal graph→multi-band sequence；详细日程见：
+按宪法 §8 的 P1→P5 顺序推进。当前 P0 已完成（三任务基准 + 3 seeds + 七拆分 + group bootstrap + 错误分层）。下一步是 **P1：为 60k 数据补全结构 sidecar**（lattice/species/fractional_coordinates 等，AFLOW REST 端点实测可达）。完整方向评估见：
 
-`PROJECT_BRAIN/agent_logs/20260824_next_work_schedule.md`
+`PROJECT_BRAIN/agent_logs/20260906_direction_reframing_audit.md`
