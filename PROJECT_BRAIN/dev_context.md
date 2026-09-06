@@ -165,14 +165,14 @@ PNG 以 1600×1500 重渲染并完成视觉检查；主图、四卡片、footer 
 ## Next Execution Steps
 
 1. ✅ 服务器传输 P0 更新脚本与数据产物（litterbox 中转，MD5 双向校验一致）；
-2. ⏳ 3 seeds {42, 2024, 7} 全链训练中（`/home/zhao/p0_launch_3seeds.sh`，日志 `/home/zhao/p0_train_chain.log`）；
-3. 每 seed 冻结模型跑 `evaluate_seven_splits.py`（三任务 × 七拆分 + group bootstrap + 错误分层）；
-4. 汇总 3-seed 报告（三任务 × 七拆分 × 3 seeds 均值/方差）；
-5. ✅ 分支已本地改名 `v7-60k-20260903`（远程推送与旧分支删除待 GitHub 凭据解除后执行）。
+2. ✅ 3 seeds {42, 2024, 7} 全链训练完成（SSL + supervised + evaluation-only + 七拆分评估）；
+3. ✅ 每 seed 冻结模型 `evaluate_seven_splits.py`（三任务 × 七拆分 + group bootstrap + 错误分层）；
+4. ✅ 3-seed 汇总报告 `three_seed_aggregate.json` + `P0_scientific_reframing_report.md`；
+5. ⏳ 分支已本地改名 `v7-60k-20260903`（远程推送与旧分支删除待 GitHub 凭据解除后执行）。
 
 ## Current Blockers / Deferred Scope
 
-- P0 3-seed 训练尚未在服务器执行（代码已就绪）；
+- GitHub 远程分支推送（本地改名已完成；远程待 GitHub 凭据解除）；
 - Phase C crystal structure schema、统一 k-path、multi-band target 与新 OOD 合同尚未冻结；
 - Materials Project 正式双源仍受出口网络封禁；
 - 当前模型仍是 E(k) analyzer，不是 structure→bands predictor。

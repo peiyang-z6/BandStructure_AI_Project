@@ -25,12 +25,15 @@
 | mismatch accuracy（1,723） | **0.7441** |
 | MC raw 95% coverage | **0.7974** |
 
-**P0 科研基准重构（进行中）**：不再把 line-mode gap MAE 作为主结果；标签拆为三任务 —— `line_mode_topology`（线模式路径可观察）、`provider_global_electronic_type`（uniform/DOS/数据库来源）、`line_global_disagreement`（预测二者冲突的二分类）；基准固定七类拆分（random / space-group / composition / prototype / leave-element / source-protocol / temporal），3 seeds {42, 2024, 7}，spacegroup group-bootstrap 95% CI，错误分层（provider type × spacegroup band × n_sites × source catalog）。方案见 `PROJECT_BRAIN/agent_logs/20260903_P0_scientific_reframing_plan.md`。
+**P0 科研基准重构（已完成，2026-09-06）**：line-mode gap MAE 退出主结果位；标签拆为三任务 —— `line_mode_topology`（线模式路径可观察）、`provider_global_electronic_type`（uniform/DOS/数据库来源）、`line_global_disagreement`（预测二者冲突的二分类）。3 seeds {42, 2024, 7} 全链训练 + 冻结模型七类拆分评估（random / space-group / composition / prototype / leave-element / source-protocol / temporal）+ spacegroup group-bootstrap 95% CI + 错误分层四轴。完整报告见 `artifacts/reports/aflow_noleak_v7_60k_seed42/P0_scientific_reframing_report.md`。
+
+**三任务主结果（outer OOD 11,987，3 seeds 均值±std）**：line_mode_topology `0.9932±0.0016`、provider_global_electronic_type `0.9371±0.0062`、line_global_disagreement `0.9666±0.0016`。
 
 ## 历史里程碑（摘要）
 
 | 日期 | 里程碑 | 要点 |
 |---|---|---|
+| 2026-09-06 | **P0 科研基准重构** | 三任务标签/三 head、3 seeds、七拆分、group bootstrap、错误分层 |
 | 2026-09-03 | **v7 60k 验收** | 60k 数据、v7 训练验收为 latest accepted（详见上表） |
 | 2026-08-31 | Phase 6 加固 | 环境固化（requirements `==` 锁定）；GUI 状态持久化（JSON 缓存，宪法 §9 无 Gradio）；CV 置信度+质量灯；文献挖掘 pipeline（P3 → `data/raw/experimental/experimental_bands.h5`） |
 | 2026-08-28 | v6 metric-fix 验收 | 修复 checkpoint-selection（aggregate inner `val_loss`、best/last/accepted 冻结）；完整回归 92→164 passed |
