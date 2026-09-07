@@ -38,8 +38,12 @@ def build_one_graph(rec: dict, max_atoms: int):
     from pymatgen.core import Lattice, Structure
 
     sp = rec.get("species_per_atom") or rec.get("species")
-    frac = np.asarray(rec["fractional_coordinates"], dtype=float)
-    lat = np.asarray(rec["lattice"], dtype=float)
+    frac = rec.get("fractional_coordinates")
+    lat = rec.get("lattice")
+    if sp is None or frac is None or lat is None:
+        return None
+    frac = np.asarray(frac, dtype=float)
+    lat = np.asarray(lat, dtype=float)
     if len(sp) != len(frac):
         return None
     struct = Structure(Lattice(lat), list(sp), frac)

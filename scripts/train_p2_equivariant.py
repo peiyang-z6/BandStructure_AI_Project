@@ -4,14 +4,15 @@ Constitution 5.0 §8 P2. Runs in the PyTorch `nequip` env. Band embeddings
 (from extract_band_embeddings.py) are the InfoNCE targets; equivariant graph
 data + descriptors come from prepare_p2_equivariant_graphs.py (precomputed).
 
-Cross-framework bridge: band embeddings are precomputed numpy; this script
-only uses torch.
+Batching: each mini-batch merges its graphs into ONE batched graph with
+per-graph node offsets (torch_geometric-style), so message passing runs once
+per batch instead of once per graph (the v1 single-graph loop was ~10 h/epoch).
 
-Training is single-graph forward with gradient accumulation: the encoder's
-edges are intra-graph indices, so each graph is forwarded alone and gradients
-accumulate over `batch_size` graphs before one optimizer step. This keeps the
-InfoNCE batch (the contrastive negatives) at `batch_size` while avoiding
-cross-graph edge-index bookkeeping.
+Performance notes (v2, 2026-09-07):
+- All graph data is preloaded into RAM ONCE (numpy), then sliced per batch;
+  edge offsets for the merged graph are built with np.repeat/concatenate so
+  the only Python loop is over batches, not over graphs.
+- loss is accumulated as a detached tensor (no per-batch GPU->CPU sync).
 
 Usage:
     python scripts/train_p2_equivariant.py \
@@ -26,6 +27,7 @@ import argparse
 import json
 import os
 import sys
+import time
 
 import numpy as np
 import torch
@@ -35,7 +37,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.evaluation.retrieval import bidirectional_metrics
 
-# Import the equivariant encoder WITHOUT triggering src.models.__init__ (TF).
 import importlib.util as _ilu
 _spec = _ilu.spec_from_file_location(
     "equivariant_structure_encoder",
@@ -54,19 +55,59 @@ def info_nce(s_emb, b_emb, temperature):
     return F.cross_entropy(logits, labels)
 
 
-def single_graph(graph, i):
-    """Return a single-graph dict for graph index i (intra-graph edges)."""
-    na = int(graph["n_atoms"][i])
-    # edge offsets: consecutive per-graph edge blocks
-    lo, hi = int(graph["edge_offsets"][i][0]), int(graph["edge_offsets"][i][1])
-    return {
-        "atom_features": graph["atom_features"][i:i + 1],
-        "n_atoms": graph["n_atoms"][i:i + 1],
-        "edge_src": graph["edge_src"][lo:hi],
-        "edge_dst": graph["edge_dst"][lo:hi],
-        "edge_vec": graph["edge_vec"][lo:hi],
-        "edge_len": graph["edge_len"][lo:hi],
-    }
+class GraphDataset:
+    """Preloads one split's graph data into RAM (numpy) and builds merged
+    mini-batches with vectorised edge-offset construction."""
+
+    def __init__(self, npz_path, device):
+        d = np.load(npz_path)
+        self.device = device
+        self.N = int(d["atom_features"].shape[1])
+        self.valid = d["valid"].astype(bool)
+        self.idx = np.where(self.valid)[0]
+
+        self.atom_features = d["atom_features"][self.idx]  # (n, N, ne+1)
+        self.n_atoms = d["n_atoms"][self.idx]
+        self.descriptors = d["descriptors"][self.idx]
+
+        # Edge data: per-graph slices into the flat edge arrays.
+        self.edge_start = d["edge_offsets"][self.idx, 0].astype(np.int64)
+        self.edge_end = d["edge_offsets"][self.idx, 1].astype(np.int64)
+        self.edge_src = d["edge_src"].astype(np.int64)
+        self.edge_dst = d["edge_dst"].astype(np.int64)
+        self.edge_vec = d["edge_vec"].astype(np.float32)
+        self.edge_len = d["edge_len"].astype(np.float32)
+
+    def __len__(self):
+        return len(self.idx)
+
+    def collate(self, indices):
+        """Merge graphs at `indices` (positions into self.idx) into one batched
+        graph, with node/edge indices rebased to batch-local space."""
+        B = len(indices)
+        N = self.N
+        atom = self.atom_features[indices].reshape(B * N, -1)
+
+        lo = self.edge_start[indices]
+        hi = self.edge_end[indices]
+        seg_lens = hi - lo
+        bases = np.repeat(np.arange(B, dtype=np.int64) * N, seg_lens)
+
+        # Flatten per-graph edge slices into one array (single concatenate).
+        flat_idx = np.concatenate(
+            [np.arange(lo[j], hi[j], dtype=np.int64) for j in range(B)]
+        ) if B else np.array([], dtype=np.int64)
+
+        return {
+            "atom_features": torch.from_numpy(atom).float().to(self.device),
+            "n_atoms": torch.from_numpy(self.n_atoms[indices]).long().to(self.device),
+            "graph_offsets": torch.from_numpy(np.arange(B, dtype=np.int64) * N).long().to(self.device),
+            "edge_src": torch.from_numpy(self.edge_src[flat_idx] + bases).long().to(self.device),
+            "edge_dst": torch.from_numpy(self.edge_dst[flat_idx] + bases).long().to(self.device),
+            "edge_vec": torch.from_numpy(self.edge_vec[flat_idx]).float().to(self.device),
+            "edge_len": torch.from_numpy(self.edge_len[flat_idx]).float().to(self.device),
+            "descriptors": torch.from_numpy(self.descriptors[indices]).float().to(self.device),
+        }
 
 
 def main() -> None:
@@ -88,16 +129,11 @@ def main() -> None:
     print(f"[P2v2] device {device}", flush=True)
 
     band_emb = np.load(args.band_emb)
-    graphs, band_t = {}, {}
+    ds, band_t = {}, {}
     for split in ("train", "test"):
-        gz = np.load(os.path.join(args.graphs, f"graphs_{split}.npz"))
-        g = {k: torch.from_numpy(gz[k]).to(device) if k in
-             ("atom_features", "n_atoms", "edge_src", "edge_dst", "edge_vec", "edge_len")
-             else (torch.from_numpy(gz[k]).to(device) if k == "descriptors" else gz[k])
-             for k in gz.keys()}
-        graphs[split] = g
+        ds[split] = GraphDataset(os.path.join(args.graphs, f"graphs_{split}.npz"), device)
         band_t[split] = torch.from_numpy(band_emb[f"band_emb_{split}"]).float().to(device)
-        print(f"[P2v2] {split}: {int(gz['valid'].sum())} valid, band dim {band_t[split].shape}", flush=True)
+        print(f"[P2v2] {split}: {len(ds[split])} valid, band dim {band_t[split].shape}", flush=True)
 
     encoder = EquivariantStructureEncoder(
         num_elements=109, multiplicity=args.multiplicity,
@@ -105,52 +141,42 @@ def main() -> None:
     ).to(device)
     opt = torch.optim.Adam(encoder.parameters(), lr=args.lr)
 
-    tr = graphs["train"]
-    valid_idx = np.where(tr["valid"])[0]
-    n = len(valid_idx)
-
+    ds_tr = ds["train"]
+    n = len(ds_tr)
     history = []
     for epoch in range(args.epochs):
-        perm = torch.randperm(n)
-        epoch_loss, nb = 0.0, 0
-        # accumulate contrastive batch
-        s_batch, b_batch = [], []
-        opt.zero_grad()
-        for t, pos in enumerate(perm.numpy()):
-            i = valid_idx[pos]
-            g = single_graph(tr, i)
-            desc = tr["descriptors"][i:i + 1]
-            s_emb = encoder(g, desc)
-            s_batch.append(s_emb)
-            b_batch.append(band_t["train"][i:i + 1])
-            if len(s_batch) == args.batch_size or t == n - 1:
-                s = torch.cat(s_batch, 0)
-                b = torch.cat(b_batch, 0)
-                loss = info_nce(s, b, args.temperature) / args.batch_size
-                loss.backward()
-                opt.step()
-                opt.zero_grad()
-                epoch_loss += float(loss) * args.batch_size
-                nb += 1
-                s_batch, b_batch = [], []
-        avg = epoch_loss / max(n, 1)
+        perm = torch.randperm(n).numpy()
+        t0 = time.time()
+        epoch_loss = torch.tensor(0.0, device=device)
+        nb = 0
+        for start in range(0, n, args.batch_size):
+            bidx = perm[start : start + args.batch_size]
+            g = ds_tr.collate(bidx)
+            b_emb = band_t["train"][bidx]
+            opt.zero_grad()
+            s_emb = encoder(g, g["descriptors"])
+            loss = info_nce(s_emb, b_emb, args.temperature)
+            loss.backward()
+            opt.step()
+            epoch_loss = epoch_loss + loss.detach()
+            nb += 1
+        avg = float(epoch_loss.item()) / max(nb, 1)
         history.append({"epoch": epoch + 1, "loss": avg})
-        if (epoch + 1) % 5 == 0:
-            print(f"[P2v2] epoch {epoch+1}/{args.epochs} loss {avg:.4f}", flush=True)
+        print(f"[P2v2] epoch {epoch+1}/{args.epochs} loss {avg:.4f} ({time.time()-t0:.1f}s)", flush=True)
 
     @torch.no_grad()
-    def encode(graph):
-        idx = np.where(graph["valid"])[0]
+    def encode(dsplit):
         out = []
-        for i in idx:
-            g = single_graph(graph, i)
-            out.append(encoder(g, graph["descriptors"][i:i + 1]).cpu().numpy())
+        for start in range(0, len(dsplit), args.batch_size):
+            bidx = np.arange(start, min(start + args.batch_size, len(dsplit)))
+            g = dsplit.collate(bidx)
+            out.append(encoder(g, g["descriptors"]).cpu().numpy())
         return np.concatenate(out, axis=0)
 
     os.makedirs(args.out, exist_ok=True)
     report = {}
     for split in ("train", "test"):
-        s_emb = encode(graphs[split])
+        s_emb = encode(ds[split])
         report[f"{split}_retrieval"] = bidirectional_metrics(s_emb, band_t[split].cpu().numpy())
     print(f"[P2v2] train retrieval: {json.dumps(report['train_retrieval'], indent=2)}", flush=True)
     print(f"[P2v2] test retrieval: {json.dumps(report['test_retrieval'], indent=2)}", flush=True)
