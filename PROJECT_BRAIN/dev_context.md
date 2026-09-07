@@ -169,10 +169,10 @@ PNG 以 1600×1500 重渲染并完成视觉检查；主图、四卡片、footer 
 
 ## Next Execution Steps
 
-P0 已完成，P1 已完成。按宪法 5.0 §8 的 P1→P5 顺序：
+P0、P1 已完成。P2 代码脚手架已完成（本地 smoke 验证通过，正式训练待服务器 V100）。按宪法 5.0 §8 的 P1→P5 顺序：
 
-1. ✅ **P1 结构 sidecar 补全**：`aflow_structure_sidecar.json`（60,000 记录，ID 与 HDF5 完全对齐；lattice/species/fractional_coordinates/functional/spin/势/倒格子/k-path/结构 SHA/kpoints_3d）。详见 `agent_logs/20260906_P1_structure_sidecar.md`；
-2. P2 跨模态检索基线（band encoder ↔ crystal graph encoder 对比学习 + ANN 索引）；
+1. ✅ **P1 结构 sidecar 补全**：`aflow_structure_sidecar.json`（60,000 记录，ID 与 HDF5 完全对齐；lattice/species_per_atom/fractional_coordinates/functional/spin/势/倒格子/k-path/结构 SHA/kpoints_3d）。详见 `agent_logs/20260906_P1_structure_sidecar.md`；
+2. ⏳ **P2 跨模态检索**：脚手架完成（晶体图 + CGCNN 编码器 + InfoNCE + 检索指标 + 配对数据 train 47,912/test 11,948，本地 smoke loss 2.69→2.40 下降正常）；**正式训练待服务器 V100**（见 `agent_logs/20260906_P2_cross_modal_retrieval_plan.md`）；
 3. P3 variable multi-band decoder（对比 Bandformer）；
 4. P4 校准不确定性 + 主动获取；
 5. P5 外部验证集（MP/JARVIS source-OOD + 论文/ARPES 图像 + 新 DFT blind test）；
@@ -181,6 +181,7 @@ P0 已完成，P1 已完成。按宪法 5.0 §8 的 P1→P5 顺序：
 ## Current Blockers / Deferred Scope
 
 - GitHub 远程分支推送（本地改名已完成；远程待 GitHub 凭据解除）；
+- P2 正式对比训练待服务器 V100（本地 RTX 4060 只够 smoke；笔记本 GPU/WSL 全批量评估前向会崩溃 WSL VM，评估改 CPU 或 V100）；
 - P1 sidecar 39 个 `ICSD_WEB/HEX` 材料结构字段 AFLOW 端点 HTTP 500（源端缺陷，已按宪法 §4 标记 missing_fields，不伪造）；
 - Materials Project 正式双源仍受出口网络封禁；
 - 当前模型仍是 E(k) analyzer；结构→多能带是 P3 目标。

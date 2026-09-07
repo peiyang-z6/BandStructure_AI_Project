@@ -67,7 +67,37 @@ structure–band 对比学习对齐 60k 配对嵌入，建立 ANN 向量索引�
 - Recall@1/5/10、mAP、结构↔能带互检索；跨七拆分（尤其 space-group OOD）
   的检索泛化。
 
-## 未决
+## 未决（已解决）
 
-- 结构编码器框架选型（clarify 超时，待用户回复）。
-- 对比学习是否联合微调 band encoder。
+- 结构编码器框架选型：用户两次 clarify 超时，按用户偏好"批准后自动选推荐项"决策为
+  **纯 TF CGCNN 式编码器**（单框架联合训练、零新依赖、V100 直接部署），记录为可回退；
+  接口可替换，P3 前可升级 e3nn。
+- 对比学习是否联合微调 band encoder：**冻结 band encoder 为 anchor**，只训练结构编码器。
+
+## P2 实现（已完成，2026-09-06）
+
+- `src/data/crystal_graph.py`：CGCNN 晶体图构建（one-hot 原子、12 最近邻、
+  原始距离存储，RBF 移到模型内以控内存）。max_atoms=50（AFLOW 查询指纹 natoms≤50）。
+- `src/models/crystal_graph_encoder.py`：纯 TF CGCNN 消息传递（3 卷积层残差 +
+  LayerNorm + 均值池化 → 128 维嵌入）。
+- `src/evaluation/retrieval.py`：InfoNCE + 余弦检索指标（recall@K/mAP/median_rank），
+  非对称跨模态语义。
+- `scripts/prepare_p2_pairs.py`：sidecar 结构 × 能带张量对齐 → 配对 NPZ
+  （train 47,912 / test 11,948 有效图）。
+- `scripts/train_p2_contrastive.py`：冻结 v7 band encoder + CGCNN InfoNCE 训练；
+  评估走 CPU（笔记本 GPU/WSL 全批量评估前向会崩溃整个 WSL VM，正式评估在 V100）。
+- smoke 验证：epoch 1 loss 2.69 → epoch 2 loss 2.40（下降正常）；未训练模型
+  recall@1 ≈ 1/300（随机水平，证明评估管线正确、训练能学出对齐）。
+- 全量回归 236 passed（新增 24 测试）。
+
+## 关键踩坑
+
+1. sidecar `species` 是去重列表 vs `fractional_coordinates` 按原子排列（56,099 条
+   长度不一致）→ CONTCAR.relax 补 per-atom species（VASP4/VASP5 两格式 + 钾化合物
+   mode 行误判 bug）。
+2. RBF 存展开后 (n,128,12,40) 内存 117GB → 存原始距离，RBF 进模型。
+3. `from_generator` 逐样本 yield 极慢 → `from_tensor_slices`（数据已 pad 定长）。
+4. 笔记本 RTX 4060 + WSL：全批量评估前向导致 WSL VM 崩溃（E_UNEXPECTED）→ 评估
+   改 CPU，正式训练去 V100。
+5. `band_encoder.encoder` 无 return_features（那是 BandStructureEncoder）→ 应调
+   `band_encoder(...)`（SSLEncoder）。
