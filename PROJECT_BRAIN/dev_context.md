@@ -1,6 +1,6 @@
 # BandStructure AI Project — Dev Context
 
-Last updated: 2026-09-04
+Last updated: 2026-09-07
 Current root: `C:\Users\PeiYang\Documents\AI Project\BandStructure AI Project\BandStructure_AI_Project`
 Branch: `v7-60k-20260903`（P0 起由 `v6-metricfix-20260827` 改名，与 v7 状态对齐）
 Pre-v6 audited snapshot commit: `025d5ce`
@@ -169,11 +169,11 @@ PNG 以 1600×1500 重渲染并完成视觉检查；主图、四卡片、footer 
 
 ## Next Execution Steps
 
-P0、P1 已完成。P2 代码脚手架已完成（本地 smoke 验证通过，正式训练待服务器 V100）。按宪法 5.0 §8 的 P1→P5 顺序：
+P0、P1 已完成。P2 代码脚手架完成但检索未验收（负面结果）。P3 已启动（用户授权跳过 P2 验收）。按宪法 5.0 §8 的 P1→P5 顺序：
 
-1. ✅ **P1 结构 sidecar 补全**：`aflow_structure_sidecar.json`（60,000 记录，ID 与 HDF5 完全对齐；lattice/species_per_atom/fractional_coordinates/functional/spin/势/倒格子/k-path/结构 SHA/kpoints_3d）。详见 `agent_logs/20260906_P1_structure_sidecar.md`；
-2. ⏳ **P2 跨模态检索**：脚手架完成（晶体图 + CGCNN 编码器 + InfoNCE + 检索指标 + 配对数据 train 47,912/test 11,948，本地 smoke loss 2.69→2.40 下降正常）；**正式训练待服务器 V100**（见 `agent_logs/20260906_P2_cross_modal_retrieval_plan.md`）；
-3. P3 variable multi-band decoder（对比 Bandformer）；
+1. ✅ **P1 结构 sidecar 补全**：`aflow_structure_sidecar.json`（60,000 记录，ID 与 HDF5 完全对齐）。详见 `agent_logs/20260906_P1_structure_sidecar.md`；
+2. ⚠️ **P2 跨模态检索（未验收）**：脚手架完成（CGCNN + 等变编码器 + InfoNCE + 检索指标）。两版正式训练均未达标：v1 纯 TF CGCNN（train recall@10=0.39 / test recall@1=0.0035 过拟合）、v2 e3nn 等变 + 增强描述子（train recall@10=0.0526 / test recall@10=0.0054，无 OOD 泛化）。诊断：v1 结构嵌入 collapse（cos mean 0.104），v2 无 collapse（0.034）但 InfoNCE batch-64 学到退化解。P2 检索留作后续优化；
+3. 🔄 **P3 variable multi-band decoder（进行中）**：方案见 `agent_logs/20260907_P3_multiband_decoder_plan.md`。数据合同审计确认 HDF5 存完整多条 band（num_bands 82-96 可变，num_kpoints 200-280 可变），无需重新下载。3a 数据准备（`src/data/multiband.py` + `scripts/prepare_p3_multiband.py`）本地 smoke + 248 测试通过，服务器全量生成进行中。下一步 3b Bandformer baseline、3c decoder；
 4. P4 校准不确定性 + 主动获取；
 5. P5 外部验证集（MP/JARVIS source-OOD + 论文/ARPES 图像 + 新 DFT blind test）；
 6. ⏳ 分支远程推送（本地已改名 `v7-60k-20260903`；待 GitHub 凭据解除）。
@@ -181,7 +181,7 @@ P0、P1 已完成。P2 代码脚手架已完成（本地 smoke 验证通过，�
 ## Current Blockers / Deferred Scope
 
 - GitHub 远程分支推送（本地改名已完成；远程待 GitHub 凭据解除）；
-- P2 正式对比训练待服务器 V100（本地 RTX 4060 只够 smoke；笔记本 GPU/WSL 全批量评估前向会崩溃 WSL VM，评估改 CPU 或 V100）；
+- P2 检索未达标（v1 过拟合 + v2 无 OOD 泛化，InfoNCE 退化解）；用户授权跳过 P2 验收先推进 P3 生成任务；
 - P1 sidecar 39 个 `ICSD_WEB/HEX` 材料结构字段 AFLOW 端点 HTTP 500（源端缺陷，已按宪法 §4 标记 missing_fields，不伪造）；
 - Materials Project 正式双源仍受出口网络封禁；
-- 当前模型仍是 E(k) analyzer；结构→多能带是 P3 目标。
+- P3 band 数分布偏向上限（金属费米附近 band 密集，delta_e=5.0 时 89% 达 max_bands=16 上限，12 种 distinct counts），可变 band 数由 mask 体现；

@@ -29,10 +29,17 @@ def select_fermi_bands(
     max_bands: int,
     delta_e: float,
 ) -> np.ndarray:
-    """Return sorted band indices overlapping [E_F - delta_e, E_F + delta_e].
+    """Return sorted band indices around the Fermi level.
 
-    Falls back to the two bands nearest E_F when the window is empty; truncates
-    to the `max_bands` nearest E_F when too many bands qualify.
+    Insulator/semiconductor (both valence and conduction bands present): select
+    the `max_bands//2` valence bands nearest the VBM (highest band_max) plus the
+    remaining conduction bands nearest the CBM (lowest band_min). This keeps BOTH
+    sides of the gap — AFLOW anchors E_F at the VBM, so a pure distance-to-E_F
+    sort would otherwise pick only valence bands.
+
+    Metal/semimetal (no clean valence/conduction split): keep bands whose
+    [min,max] interval overlaps [E_F - delta_e, E_F + delta_e], truncating to
+    the `max_bands` nearest E_F (or the two nearest when the window is empty).
     """
     energies = np.asarray(energies, dtype=np.float32)
     if energies.ndim != 2:
@@ -43,19 +50,31 @@ def select_fermi_bands(
 
     band_min = np.min(energies, axis=1)
     band_max = np.max(energies, axis=1)
-    lo = float(efermi) - float(delta_e)
-    hi = float(efermi) + float(delta_e)
+    ef = float(efermi)
 
+    valence = np.where(band_max <= ef)[0]
+    conduction = np.where(band_min > ef)[0]  # strict > so band==E_F is valence-only
+
+    if len(valence) > 0 and len(conduction) > 0:
+        n_v = max_bands // 2
+        n_c = max_bands - n_v
+        vbm_order = valence[np.argsort(-band_max[valence])]  # VBM first
+        cbm_order = conduction[np.argsort(band_min[conduction])]  # CBM first
+        sel = np.concatenate([vbm_order[:n_v], cbm_order[:n_c]])
+        return np.sort(sel).astype(np.int64)
+
+    # metal/semimetal fallback: window overlap + distance-to-E_F truncation
+    lo = ef - float(delta_e)
+    hi = ef + float(delta_e)
     overlap = (band_min <= hi) & (band_max >= lo)
     idx = np.where(overlap)[0]
 
     if len(idx) == 0:
-        # fallback: the two bands whose min/max are nearest E_F
-        dist = np.minimum(np.abs(band_min - efermi), np.abs(band_max - efermi))
+        dist = np.minimum(np.abs(band_min - ef), np.abs(band_max - ef))
         idx = np.argsort(dist)[: min(2, num_bands)]
 
     if len(idx) > max_bands:
-        dist = np.minimum(np.abs(band_min[idx] - efermi), np.abs(band_max[idx] - efermi))
+        dist = np.minimum(np.abs(band_min[idx] - ef), np.abs(band_max[idx] - ef))
         idx = idx[np.argsort(dist)[:max_bands]]
 
     return np.sort(idx).astype(np.int64)
