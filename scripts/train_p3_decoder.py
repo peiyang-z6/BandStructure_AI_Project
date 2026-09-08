@@ -27,7 +27,8 @@ import tensorflow as tf
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from src.models.multiband_decoder import MultiBandDecoder, masked_mae
+from src.models.multiband_decoder import MultiBandDecoder, sorted_masked_mae
+from src.evaluation.multiband_metrics import band_mae, gap_mae, sorted_band_mae
 
 
 def load_split(npz_path):
@@ -84,7 +85,7 @@ def main() -> None:
         mask = tf.gather(g_train["band_mask"], bidx)
         with tf.GradientTape() as tape:
             pred = model(graph, k_axis_t, training=True)
-            loss = masked_mae(pred, bands, mask)
+            loss = sorted_masked_mae(pred, bands, mask)
         grads = tape.gradient(loss, model.trainable_variables)
         optimizer.apply_gradients(zip(grads, model.trainable_variables))
         return loss
@@ -117,31 +118,12 @@ def main() -> None:
             preds.append(predict_batch(bidx, split_g).numpy())
         pred = np.concatenate(preds, axis=0)
         bands = split_g["bands"].numpy()
-        mask = split_g["band_mask"].numpy().astype(np.float32)
-        err = np.abs(pred - bands)
-        band_mae = float((err * mask[..., None]).sum() / (mask.sum() * n_k))
-        # gap MAE via predicted valence/conduction edges
-        bmin = pred.min(axis=-1)
-        bmax = pred.max(axis=-1)
-        tbmin = bands.min(axis=-1)
-        tbmax = bands.max(axis=-1)
-        vbm = np.where(bmax <= 0, bmax, -1e9) * mask
-        cbm = np.where(bmin >= 0, bmin, 1e9)
-        cbm = np.where(mask > 0, cbm, 1e9)
-        pred_vbm = vbm.max(axis=-1)
-        pred_cbm = cbm.min(axis=-1)
-        has_val = ((bmax <= 0) & (mask > 0)).any(axis=-1)
-        has_con = ((bmin >= 0) & (mask > 0)).any(axis=-1)
-        pred_gap = np.where(has_val & has_con, pred_cbm - pred_vbm, 0.0)
-        tvbm = np.where(tbmax <= 0, tbmax, -1e9) * mask
-        tcbm = np.where(tbmin >= 0, tbmin, 1e9)
-        tcbm = np.where(mask > 0, tcbm, 1e9)
-        true_gap = np.where(
-            ((tbmax <= 0) & (mask > 0)).any(axis=-1) & ((tbmin >= 0) & (mask > 0)).any(axis=-1),
-            tcbm.min(axis=-1) - tvbm.max(axis=-1), 0.0,
-        )
-        gap_mae = float(np.abs(pred_gap - true_gap).mean())
-        return {"band_mae": band_mae, "gap_mae": gap_mae}
+        mask = split_g["band_mask"].numpy()
+        return {
+            "band_mae": band_mae(pred, bands, mask),
+            "sorted_band_mae": sorted_band_mae(pred, bands, mask),
+            "gap_mae": gap_mae(pred, bands, mask, 0.0),
+        }
 
     report = {
         "train": evaluate(g_train),

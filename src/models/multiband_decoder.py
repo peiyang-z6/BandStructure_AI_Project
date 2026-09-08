@@ -118,3 +118,30 @@ def masked_mae(pred: tf.Tensor, target: tf.Tensor, mask: tf.Tensor) -> tf.Tensor
     masked = err * tf.cast(mask, tf.float32)[..., None]
     denom = tf.reduce_sum(tf.cast(mask, tf.float32)) * tf.cast(tf.shape(pred)[-1], tf.float32) + 1e-8
     return tf.reduce_sum(masked) / denom
+
+
+def sorted_masked_mae(pred: tf.Tensor, target: tf.Tensor, mask: tf.Tensor) -> tf.Tensor:
+    """Masked MAE with per-k-point 1D optimal transport (sorting) band matching.
+
+    Band identity swaps at high-symmetry crossings; a fixed band-slot MAE
+    wrongly penalizes a correct prediction whose bands exchange order at a
+    crossing. Sorting each k-point's band energies independently is the exact
+    solution of the 1D optimal-transport problem, so it aligns bands by energy
+    (not by slot) and only measures the energy discrepancy.
+
+    Padding bands (mask False) are pushed to +inf so they sort to the end and
+    are excluded from the loss via the sorted mask.
+    """
+    m = tf.cast(mask, tf.float32)  # (B, max_bands)
+    large = 1e9
+    pred_m = tf.where(mask[..., None], pred, tf.fill(tf.shape(pred), large))
+    tgt_m = tf.where(mask[..., None], target, tf.fill(tf.shape(target), large))
+    pred_s = tf.sort(pred_m, axis=1)
+    tgt_s = tf.sort(tgt_m, axis=1)
+    mask_s = tf.sort(m, axis=1, direction="DESCENDING")  # valid bands first
+
+    err = tf.abs(pred_s - tgt_s)  # (B, max_bands, n_k); padding pairs -> inf-inf = nan
+    err = tf.where(tf.math.is_finite(err), err, 0.0)
+    masked = err * mask_s[..., None]
+    denom = tf.reduce_sum(mask_s) * tf.cast(tf.shape(pred)[-1], tf.float32) + 1e-8
+    return tf.reduce_sum(masked) / denom

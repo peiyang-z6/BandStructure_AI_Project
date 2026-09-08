@@ -8,6 +8,7 @@ from src.models.multiband_decoder import (
     MultiBandDecoder,
     k_positional_encoding,
     masked_mae,
+    sorted_masked_mae,
 )
 
 
@@ -48,3 +49,27 @@ def test_masked_mae_counts_only_masked():
     mask = tf.constant([[True, False]])
     # one band (2 positions) with |0-2|=2 each -> mean = 2.0
     assert float(masked_mae(pred, target, mask).numpy()) == pytest.approx(2.0, abs=1e-5)
+
+
+def test_sorted_masked_mae_invariant_to_band_order():
+    # pred band order swapped vs target (crossing) -> sorted MAE should be 0
+    pred = tf.constant([[[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]]])
+    target = tf.constant([[[2.0, 2.0], [0.0, 0.0], [1.0, 1.0]]])
+    mask = tf.constant([[True, True, True]])
+    assert float(sorted_masked_mae(pred, target, mask).numpy()) == pytest.approx(0.0, abs=1e-5)
+
+
+def test_sorted_masked_mae_ignores_padding():
+    # valid bands {1.0, 5.0} on both sides; padding band (slot 1) differs but is ignored
+    pred = tf.constant([[[1.0, 1.0], [9.0, 9.0], [5.0, 5.0]]])
+    target = tf.constant([[[1.0, 1.0], [0.0, 0.0], [5.0, 5.0]]])
+    mask = tf.constant([[True, False, True]])
+    assert float(sorted_masked_mae(pred, target, mask).numpy()) == pytest.approx(0.0, abs=1e-5)
+
+
+def test_sorted_masked_mae_measures_energy_error():
+    pred = tf.constant([[[0.0], [1.0]]])
+    target = tf.constant([[[0.5], [1.5]]])
+    mask = tf.constant([[True, True]])
+    # sorted: |0-0.5| + |1-1.5| = 0.5 + 0.5 = 1.0 over 2 bands -> 0.5
+    assert float(sorted_masked_mae(pred, target, mask).numpy()) == pytest.approx(0.5, abs=1e-5)
