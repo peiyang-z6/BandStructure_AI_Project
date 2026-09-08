@@ -1,6 +1,6 @@
 # BandStructure AI Project — Dev Context
 
-Last updated: 2026-09-07
+Last updated: 2026-09-08
 Current root: `C:\Users\PeiYang\Documents\AI Project\BandStructure AI Project\BandStructure_AI_Project`
 Branch: `v7-60k-20260903`（P0 起由 `v6-metricfix-20260827` 改名，与 v7 状态对齐）
 Pre-v6 audited snapshot commit: `025d5ce`
@@ -21,7 +21,7 @@ Code tags: `v6-metricfix-code-20260827`, `v6-metricfix-sync-20260828`, `v6-metri
   → tkinter Plot-to-Physics
 ```
 
-**差异化方向（2026-09-06）**：跨模态"晶体结构 — 数值能带 — 论文/实验能带图像"模型，用于检索/匹配/可信拒识/主动 DFT 闭环。P1→P5 顺序见宪法 5.0 §8。P0（科研基准重构）已完成，下一步 P1 结构 sidecar 补全。
+**差异化方向（2026-09-06）**：跨模态"晶体结构 — 数值能带 — 论文/实验能带图像"模型，用于检索/匹配/可信拒识/主动 DFT 闭环。P1→P5 顺序见宪法 5.0 §8。P0（科研基准重构）与 P1 结构 sidecar 已完成；P2 未验收，P3 正按用户限域授权进行探索性纠错和对照训练，详见宪法 5.1 §8。
 
 **`aflow_noleak_v7_60k_seed42` 为 latest accepted**（2026-09-03）：AFLOW 60,000 条（主通道 55,476 + 代理通道唯一 4,524 seed 42 抽样合并 = 60,000，metadata 60,000 ID 一致；张量 59,899 样本、101 条无边缘包络跳过已记录）。V100 GPU-only：SSL 50 epochs（early stopping）、监督 51 epochs（best epoch 31 by aggregate `val_loss`；best/last/accepted 冻结后 evaluation-only）。两次 GPU OOM 已 TDD 修复（`4367f87`、`ed783a8`），全量回归 199 passed。产物回传 SHA-256 校验一致，本地加载/前向通过，v4/v5/v6 immutable rehash 一致。
 
@@ -167,13 +167,26 @@ PNG 以 1600×1500 重渲染并完成视觉检查；主图、四卡片、footer 
 
 连接信息和密码不得写入项目或报告。
 
+## P3 本轮实证状态（2026-09-08）
+
+- 排序 OT 旧 run 的 60 epochs 已完成；旧报告 train/test sorted_band_mae 为 2.7861583315 / 3.7084333312 eV。旧 gap 实现和训练目标有缺陷，不作科学验收结论。
+- 已回传旧模型、报告、对应代码和训练日志；归档 SHA 双端一致，见 `artifacts/reports/p3_audit_20260908/legacy_inventory.json`。
+- 本轮复现 padding 改写 VBM、deep-valence/high-conduction 掩盖 crossing、丢失跨越 band、重复 k 距离跨分支插值、缺边缘误标金属、NaN loss 被置零、Keras 重载预测变化等问题，并逐项回归修正。
+- outer-train 固定抽样 1,000 个材料中，旧选择器对 329 个漏掉全部 EF-straddling band；这是抽样数据诊断，不能外推为全量金属比例。
+- 原地新增 `attention_layers=0/2` 的 MLP/k-attention 对照，支持 segment attention mask；两版 Keras 重载预测一致性测试通过。
+- 修正版数据独立保存到 `p3_multiband_v2_20260908/`，旧 P3 及 v4–v7 资产不覆盖。核心六文件与两个入口均完成独立复审，当前源文件 SHA 与审查快照一致；本地及服务器完整回归均为 **456 passed**。
+- 本地 GPU 与服务器两张 V100 的真实晶体端到端 smoke 均通过：重载差均为 0，smoke holdout ID/group overlap 均为 0，权重/预测/凭据 SHA 已读回。服务器 headless、OpenCV/历史资产缺项、conda 激活问题已分别实证修复；未跳过测试，未启用 CPU fallback。该结果不代表正式 outer 精度。
+- checkpoint 保存模型/优化器/epoch 并实测恢复，但无 CLI resume，非空 run 目录不可覆盖。训练侧原子数最大为 50，容量审计不代替新版全量质量与覆盖统计。
+- 受控流程已真实启动：独立全量 prepare → 两张 GPU 上同数据、seed 42、batch 32、最多 180 epochs 的 MLP/两层 attention 对照 → 双方冻结后 outer 评估。完成凭据/中性 final commit 未发布前不放行训练；本轮最终 valid/exclusion 计数与精度尚待结果。
+- 纠错依据见 `agent_logs/20260908_P3_reaudit_attention_execution.md`；最新服务器验证、失败保留与运行合同见 `agent_logs/20260908_P3_remote_controlled_execution.md`。远端源码快照在流程运行中保持冻结，本地文档更新不直接覆盖该快照。
+
 ## Next Execution Steps
 
-P0、P1 已完成。P2 代码脚手架完成但检索未验收（负面结果）。P3 已启动（用户授权跳过 P2 验收）。按宪法 5.0 §8 的 P1→P5 顺序：
+P0、P1 已完成。P2 检索未验收。P3 按宪法 5.1 的限域授权进行探索性实现与对照训练；不能把该授权写成 P2/P3 科学验收通过。
 
 1. ✅ **P1 结构 sidecar 补全**：`aflow_structure_sidecar.json`（60,000 记录，ID 与 HDF5 完全对齐）。详见 `agent_logs/20260906_P1_structure_sidecar.md`；
-2. ⚠️ **P2 跨模态检索（未验收）**：脚手架完成（CGCNN + 等变编码器 + InfoNCE + 检索指标）。两版正式训练均未达标：v1 纯 TF CGCNN（train recall@10=0.39 / test recall@1=0.0035 过拟合）、v2 e3nn 等变 + 增强描述子（train recall@10=0.0526 / test recall@10=0.0054，无 OOD 泛化）。诊断：v1 结构嵌入 collapse（cos mean 0.104），v2 无 collapse（0.034）但 InfoNCE batch-64 学到退化解。P2 检索留作后续优化；
-3. 🔄 **P3 variable multi-band decoder（进行中）**：方案见 `agent_logs/20260907_P3_multiband_decoder_plan.md`。数据合同审计确认 HDF5 存完整多条 band（num_bands 82-96 可变，num_kpoints 200-280 可变），无需重新下载。3a 数据准备（`src/data/multiband.py` + `scripts/prepare_p3_multiband.py`）本地 smoke + 248 测试通过，服务器全量生成进行中。下一步 3b Bandformer baseline、3c decoder；
+2. ⚠️ **P2 跨模态检索（未验收）**：脚手架完成（CGCNN + 等变编码器 + InfoNCE + 检索指标）。两版正式训练均未达标：v1 纯 TF CGCNN（train recall@10=0.39 / test recall@1=0.0035 过拟合）、v2 e3nn 等变 + 增强描述子（train recall@10=0.0526 / test recall@10=0.0054，无 OOD 泛化）。原因尚待系统诊断：单一 cosine mean 不能证明或排除 collapse，也不能独自定位 InfoNCE 退化根因。P2 检索留作后续优化；
+3. 🔄 **P3 variable multi-band decoder（进行中、未验收）**：最新状态见 `agent_logs/20260908_P3_remote_controlled_execution.md`。独立复审、本地/服务器 456 项完整回归及双 V100 端到端验证已通过；新版全量数据流程已进入 MLP/自注意力受控训练，双方冻结后才做 outer 评估。尚无本轮最终精度，正式 Bandformer 对照与完整物理指标仍未完成；
 4. P4 校准不确定性 + 主动获取；
 5. P5 外部验证集（MP/JARVIS source-OOD + 论文/ARPES 图像 + 新 DFT blind test）；
 6. ⏳ 分支远程推送（本地已改名 `v7-60k-20260903`；待 GitHub 凭据解除）。
@@ -181,7 +194,7 @@ P0、P1 已完成。P2 代码脚手架完成但检索未验收（负面结果）
 ## Current Blockers / Deferred Scope
 
 - GitHub 远程分支推送（本地改名已完成；远程待 GitHub 凭据解除）；
-- P2 检索未达标（v1 过拟合 + v2 无 OOD 泛化，InfoNCE 退化解）；用户授权跳过 P2 验收先推进 P3 生成任务；
+- P2 检索未达标，现有结果未证明 OOD 泛化；根因仍待系统复核，不能仅凭 InfoNCE loss 或单一 cosine 统计认定退化解。P3 按宪法 5.1 限域授权探索，不代表 P2 验收通过；
 - P1 sidecar 39 个 `ICSD_WEB/HEX` 材料结构字段 AFLOW 端点 HTTP 500（源端缺陷，已按宪法 §4 标记 missing_fields，不伪造）；
 - Materials Project 正式双源仍受出口网络封禁；
-- P3 band 数分布偏向上限（金属费米附近 band 密集，delta_e=5.0 时 89% 达 max_bands=16 上限，12 种 distinct counts），可变 band 数由 mask 体现；
+- P3 旧选带比例与金属比例受已证实的 crossing 丢失缺陷影响，不能用于修正版结论；以新 schema=2 prepare_report 的实测覆盖、容量截断与 exclusion 数为准。

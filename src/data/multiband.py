@@ -5,14 +5,16 @@ resamples them onto a fixed k-grid, supporting a VARIABLE number of bands via
 a boolean band mask (unlike the fixed 2-band edge-envelope tensor).
 
 Design:
-- `select_fermi_bands` keeps bands whose [min,max] energy interval overlaps
-  [E_F - delta_e, E_F + delta_e]; if that window is empty it falls back to the
-  two bands nearest E_F; if more than `max_bands` qualify it keeps the
-  `max_bands` nearest to E_F. This yields a physically meaningful "bands around
-  the Fermi level" slice with a variable count.
-- `extract_fermi_bands` resamples each selected band onto a uniform k-grid
-  (shape-preserving PCHIP, no cubic-spline overshoot near the Fermi level) and
-  pads to (max_bands, n_k) with a boolean mask.
+- A clean occupied/empty split with no EF-straddling band uses a balanced
+  VBM/CBM-side selection. Otherwise, window overlap prioritizes EF-straddling
+  intervals before deterministic truncation. This is selection, not a global
+  metal/insulator label; true topology requires segment-aware evidence.
+- Keep complete selected trajectories and report capped capacity. The entire
+  trajectory need not lie inside the selection window.
+- Normalize the cumulative k axis, split duplicate-distance boundaries BEFORE
+  independent PCHIP interpolation, and retain the same segment assignments.
+  `path_segments` is shared with the preparation script; no averaging of
+  disconnected-branch energies is permitted. Output energies are EF-relative.
 """
 from __future__ import annotations
 
@@ -20,7 +22,7 @@ from typing import Tuple
 
 import numpy as np
 
-from src.data.ood_tensor_builder import _resample_band
+from scipy.interpolate import PchipInterpolator
 
 
 def select_fermi_bands(
@@ -31,19 +33,21 @@ def select_fermi_bands(
 ) -> np.ndarray:
     """Return sorted band indices around the Fermi level.
 
-    Insulator/semiconductor (both valence and conduction bands present): select
+    Clean split (both frontier sides present AND no EF-straddling band): select
     the `max_bands//2` valence bands nearest the VBM (highest band_max) plus the
     remaining conduction bands nearest the CBM (lowest band_min). This keeps BOTH
     sides of the gap — AFLOW anchors E_F at the VBM, so a pure distance-to-E_F
     sort would otherwise pick only valence bands.
 
-    Metal/semimetal (no clean valence/conduction split): keep bands whose
+    EF-straddling or incomplete-frontier input: keep bands whose
     [min,max] interval overlaps [E_F - delta_e, E_F + delta_e], truncating to
     the `max_bands` nearest E_F (or the two nearest when the window is empty).
     """
     energies = np.asarray(energies, dtype=np.float32)
+    if energies.ndim == 3:
+        energies = energies.reshape(-1, energies.shape[-1])
     if energies.ndim != 2:
-        raise ValueError(f"expected 2D energies (num_bands, num_kpoints), got {energies.shape}")
+        raise ValueError(f"expected 2D or spin-resolved 3D energies, got {energies.shape}")
     num_bands = energies.shape[0]
     if num_bands < 1:
         raise ValueError("need at least one band")
@@ -53,9 +57,11 @@ def select_fermi_bands(
     ef = float(efermi)
 
     valence = np.where(band_max <= ef)[0]
-    conduction = np.where(band_min > ef)[0]  # strict > so band==E_F is valence-only
+    # An upward EF touch is conduction; a flat EF band remains valence-only.
+    conduction = np.where((band_min >= ef) & (band_max > ef))[0]
 
-    if len(valence) > 0 and len(conduction) > 0:
+    crossing = (band_min < ef) & (band_max > ef)
+    if not crossing.any() and len(valence) > 0 and len(conduction) > 0:
         n_v = max_bands // 2
         n_c = max_bands - n_v
         vbm_order = valence[np.argsort(-band_max[valence])]  # VBM first
@@ -74,10 +80,24 @@ def select_fermi_bands(
         idx = np.argsort(dist)[: min(2, num_bands)]
 
     if len(idx) > max_bands:
-        dist = np.minimum(np.abs(band_min[idx] - ef), np.abs(band_max[idx] - ef))
-        idx = idx[np.argsort(dist)[:max_bands]]
+        dist = np.maximum(np.maximum(band_min[idx] - ef, ef - band_max[idx]), 0.0)
+        order = np.lexsort((idx, dist, ~crossing[idx]))
+        idx = idx[order[:max_bands]]
 
     return np.sort(idx).astype(np.int64)
+
+
+def path_segments(k_distances: np.ndarray, n_k: int) -> Tuple[np.ndarray, np.ndarray]:
+    """Source and resampled segment IDs; duplicate distances start a new segment."""
+    k = np.asarray(k_distances, dtype=np.float64).reshape(-1)
+    if (len(k) < 2 or n_k < 2 or not np.isfinite(k).all()
+            or np.any(np.diff(k) < 0) or k[-1] - k[0] <= 1e-12):
+        raise ValueError("k_distances must be finite, monotone, with positive span")
+    starts = np.r_[0, np.flatnonzero(np.diff(k) <= 1e-12) + 1]
+    source = np.cumsum(np.isin(np.arange(len(k)), starts)).astype(np.int32) - 1
+    axis = np.linspace(k[0], k[-1], n_k)
+    target = np.searchsorted(k[starts], axis, side="right").astype(np.int32) - 1
+    return source, target
 
 
 def extract_fermi_bands(
@@ -99,8 +119,10 @@ def extract_fermi_bands(
         k_axis: (n_k,) float32 uniform normalized k-grid in [0, 1]
     """
     energies = np.asarray(energies, dtype=np.float32)
+    if energies.ndim == 3:
+        energies = energies.reshape(-1, energies.shape[-1])
     if energies.ndim != 2:
-        raise ValueError(f"expected 2D energies, got {energies.shape}")
+        raise ValueError(f"expected 2D or spin-resolved 3D energies, got {energies.shape}")
 
     idx = select_fermi_bands(energies, efermi, max_bands, delta_e)
     n_sel = len(idx)
@@ -111,16 +133,27 @@ def extract_fermi_bands(
 
     # Normalize the source k-path to [0, 1] for a unified decoder grid.
     k = np.asarray(k_distances, dtype=np.float64).reshape(-1)
-    if len(k) >= 2 and float(k[-1] - k[0]) > 1.0e-12:
-        k_norm = (k - float(k[0])) / float(k[-1] - k[0])
-    else:
-        k_norm = np.linspace(0.0, 1.0, len(k), dtype=np.float64)
+    if len(k) != energies.shape[-1]:
+        raise ValueError("k_distances length must match energies")
+    source_segments, target_segments = path_segments(k, n_k)
+    k_norm = (k - float(k[0])) / float(k[-1] - k[0])
 
     k_axis = np.linspace(0.0, 1.0, n_k, dtype=np.float32)
 
-    for slot, band_idx in enumerate(idx):
-        bands[slot] = _resample_band(
-            energies[band_idx], n_k, k_norm, shape_preserving=True
-        )
+    # Duplicate distances delimit source path segments. Never average two
+    # different branches into a fictitious energy at their shared x-coordinate.
+    starts = np.r_[0, np.flatnonzero(np.diff(source_segments)) + 1]
+    for sid, start in enumerate(starts):
+        stop = starts[sid + 1] if sid + 1 < len(starts) else len(k_norm)
+        positions = np.flatnonzero(target_segments == sid)
+        if not len(positions):
+            continue
+        values = energies[idx, start:stop] - float(efermi)
+        if stop - start == 1:
+            bands[:n_sel, positions] = values
+        else:
+            query = np.clip(k_axis[positions], k_norm[start], k_norm[stop - 1])
+            bands[:n_sel, positions] = PchipInterpolator(
+                k_norm[start:stop], values, axis=1)(query)
 
     return bands, mask, k_axis

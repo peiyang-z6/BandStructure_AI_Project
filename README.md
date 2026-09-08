@@ -29,6 +29,18 @@
 
 **三任务主结果（outer OOD 11,987，3 seeds 均值±std）**：line_mode_topology `0.9932±0.0016`、provider_global_electronic_type `0.9371±0.0062`、line_global_disagreement `0.9666±0.0016`。
 
+### P3 探索性进展与纠错（2026-09-08，未验收）
+
+P1 已完成，P2 检索仍未验收。用户授权先行推进 P3；该限域例外已记录到宪法 5.1，不代表跨过科学验收。
+
+排序 OT 的旧 60-epoch run 已完成，但本轮复核发现选带会漏掉费米跨越 band、padding 会改写 VBM、插值可能跨不连续分支、Keras 重载预测不一致等问题。旧模型/报告/对应代码已归档并验证双端 SHA；旧 gap 数值不作为有效精度结论。
+
+已原地增加可选 k 点自注意力，保持 MLP 对照；实现 inner-only 选模、best/last/accepted 冻结和 evaluation-only。EF 接触、loss 溢出、prepare 完成／冒烟凭据、outer ID/group 互斥和样本轴门禁均已通过独立复审。**本地与服务器完整回归均为 456 passed**；本地 GPU 及服务器双 V100 的真实晶体端到端冒烟均通过，重载预测差为 0。
+
+受控流程已启动：新版全量派生数据 → MLP／两层自注意力对照 → 双方冻结后 outer 评估。共同参数为 seed 42、batch 32、最多 180 epochs；不根据 outer 结果调参。当前仍无本轮最终精度，不能标记 P3 科学验收。保留模型/优化器/epoch 恢复状态，但尚无 CLI resume。逐 k 谱 OT 不等于轨迹匹配，scalar k 不支持物理有效质量结论；正式 Bandformer 同数据对照与完整物理指标仍待完成。
+
+记录：[纠错与审查](PROJECT_BRAIN/agent_logs/20260908_P3_reaudit_attention_execution.md) · [服务器验证与受控流程](PROJECT_BRAIN/agent_logs/20260908_P3_remote_controlled_execution.md)。旧无完成凭据的 P3 NPZ 必须重新 prepare 到新目录，冒烟输入不得作为正式数据。初次服务器环境失败已保留，最终通过没有跳过测试或伪造历史资产。
+
 ## 历史里程碑（摘要）
 
 | 日期 | 里程碑 | 要点 |

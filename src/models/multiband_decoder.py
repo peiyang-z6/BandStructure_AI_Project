@@ -1,7 +1,7 @@
 """P3 variable multi-band decoder (Constitution 5.0 §8 P3).
 
-Predicts Fermi-proximate bands E_n(k) from a crystal graph, with a VARIABLE
-band count handled by a boolean band mask (unlike Bandformer's fixed count).
+Predicts selected-window energies up to max_bands. A supplied target band mask
+handles variable supervised cardinality; the model does not infer band count.
 
 Starting-point architecture (deliberately simple, to be extended):
 - `CGCNNEncoder` (P2, reused) -> structure embedding z (B, d_model);
@@ -9,9 +9,10 @@ Starting-point architecture (deliberately simple, to be extended):
   embedding + a sine/cosine positional encoding of the normalized k-axis;
 - a small MLP head maps the conditioned vector to one energy value.
 
-The band mask is applied only in the loss (masked MAE); band-set matching
-(Hungarian / optimal transport) and physics-constraint losses are added in a
-later step of 3c, once this baseline trains.
+Optional pre-normalized self-attention operates on k tokens, segment-masked when
+IDs are supplied. Training uses per-k spectral OT. Whole-trajectory matching,
+full reciprocal-space conditioning and the full P3 physics constraints remain
+outstanding; this is not a Bandformer reproduction or a P3 acceptance claim.
 
 Usage: see scripts/train_p3_decoder.py.
 """
@@ -50,6 +51,8 @@ class MultiBandDecoder(keras.Model):
         rbf_bins: int = 40,
         max_neighbors: int = 12,
         dropout_rate: float = 0.1,
+        attention_layers: int = 0,
+        attention_heads: int = 4,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -62,6 +65,17 @@ class MultiBandDecoder(keras.Model):
         self.rbf_bins = rbf_bins
         self.max_neighbors = max_neighbors
         self.dropout_rate = dropout_rate
+        self.attention_layers = attention_layers
+        self.attention_heads = attention_heads
+        self.k_attention = [layers.MultiHeadAttention(
+            num_heads=attention_heads, key_dim=d_model // attention_heads,
+            dropout=dropout_rate, name=f"k_attention_{i}") for i in range(attention_layers)]
+        self.k_norm1 = [layers.LayerNormalization(epsilon=1e-6) for _ in range(attention_layers)]
+        self.k_norm2 = [layers.LayerNormalization(epsilon=1e-6) for _ in range(attention_layers)]
+        self.k_ffn = [keras.Sequential([
+            layers.Dense(hidden_dim, activation="gelu"), layers.Dense(d_model)
+        ]) for _ in range(attention_layers)]
+        self.k_dropout = layers.Dropout(dropout_rate)
 
         self.encoder = CGCNNEncoder(
             num_elements=num_elements,
@@ -87,14 +101,40 @@ class MultiBandDecoder(keras.Model):
     def call(self, graph, k_axis, training=False):
         z = self.encoder(graph, training=training)  # (B, d_model)
         k_pe = k_positional_encoding(k_axis, self.d_model)  # (n_k, d_model)
-        # (B, max_bands, n_k, d_model) = z + band_emb + k_pe
-        h = (
-            z[:, None, None, :]
-            + self.band_embedding[None, :, None, :]
-            + k_pe[None, None, :, :]
-        )
+        # Attention operates on (B,K,D), not the much larger (B*bands,K,D).
+        # A zero-layer model remains the original MLP architecture.
+        k_tokens = z[:, None, :] + k_pe[None, :, :]
+        segments = graph.get("segment_ids")
+        attention_mask = None
+        if segments is not None:
+            segments = tf.convert_to_tensor(segments)
+            if segments.shape.rank == 1:
+                segments = tf.broadcast_to(segments[None, :], tf.shape(k_tokens)[:2])
+            attention_mask = tf.equal(segments[:, :, None], segments[:, None, :])
+        for attention, norm1, norm2, ffn in zip(
+                self.k_attention, self.k_norm1, self.k_norm2, self.k_ffn):
+            normalized = norm1(k_tokens)
+            attended = attention(normalized, normalized, attention_mask=attention_mask, training=training)
+            k_tokens = k_tokens + self.k_dropout(attended, training=training)
+            k_tokens = k_tokens + self.k_dropout(ffn(norm2(k_tokens), training=training), training=training)
+        h = k_tokens[:, None, :, :] + self.band_embedding[None, :, None, :]
         out = self.head(h, training=training)  # (B, max_bands, n_k, 1)
         return tf.squeeze(out, axis=-1)  # (B, max_bands, n_k)
+
+    def get_build_config(self):
+        # Weight shapes do not depend on the number of atoms in a graph.
+        return {"graph_atoms": 1}
+
+    def build_from_config(self, config):
+        # Multi-input subclassed models must create *all* layer variables
+        # before Keras loads saved weights; an unbuilt reload can look valid
+        # yet yield freshly initialized predictions on its first real call.
+        graph = {
+            "atom_features": tf.zeros((1, 1, self.num_elements + 1)),
+            "neighbor_list": tf.fill((1, 1, self.max_neighbors), -1),
+            "neighbor_dist": tf.zeros((1, 1, self.max_neighbors)),
+        }
+        self(graph, tf.linspace(0., 1., self.n_k), training=False)
 
     def get_config(self):
         config = super().get_config()
@@ -108,6 +148,8 @@ class MultiBandDecoder(keras.Model):
             "rbf_bins": self.rbf_bins,
             "max_neighbors": self.max_neighbors,
             "dropout_rate": self.dropout_rate,
+            "attention_layers": self.attention_layers,
+            "attention_heads": self.attention_heads,
         })
         return config
 
@@ -123,25 +165,31 @@ def masked_mae(pred: tf.Tensor, target: tf.Tensor, mask: tf.Tensor) -> tf.Tensor
 def sorted_masked_mae(pred: tf.Tensor, target: tf.Tensor, mask: tf.Tensor) -> tf.Tensor:
     """Masked MAE with per-k-point 1D optimal transport (sorting) band matching.
 
-    Band identity swaps at high-symmetry crossings; a fixed band-slot MAE
-    wrongly penalizes a correct prediction whose bands exchange order at a
-    crossing. Sorting each k-point's band energies independently is the exact
-    solution of the 1D optimal-transport problem, so it aligns bands by energy
-    (not by slot) and only measures the energy discrepancy.
+    Sorting gives the equal-cardinality 1D spectral OT solution at each k.
+    It is invariant to independent per-k permutations, not a globally consistent
+    assignment of whole band trajectories. It cannot certify continuity or
+    wavefunction identity through crossings.
 
     Padding bands (mask False) are pushed to +inf so they sort to the end and
     are excluded from the loss via the sorted mask.
     """
+    pred = tf.debugging.check_numerics(
+        tf.where(mask[..., None], pred, tf.zeros_like(pred)), "nonfinite valid prediction")
+    target = tf.debugging.check_numerics(
+        tf.where(mask[..., None], target, tf.zeros_like(target)), "nonfinite valid target")
     m = tf.cast(mask, tf.float32)  # (B, max_bands)
-    large = 1e9
+    large = float("inf")
     pred_m = tf.where(mask[..., None], pred, tf.fill(tf.shape(pred), large))
     tgt_m = tf.where(mask[..., None], target, tf.fill(tf.shape(target), large))
     pred_s = tf.sort(pred_m, axis=1)
     tgt_s = tf.sort(tgt_m, axis=1)
     mask_s = tf.sort(m, axis=1, direction="DESCENDING")  # valid bands first
 
-    err = tf.abs(pred_s - tgt_s)  # (B, max_bands, n_k); padding pairs -> inf-inf = nan
-    err = tf.where(tf.math.is_finite(err), err, 0.0)
-    masked = err * mask_s[..., None]
+    # Remove padding *before* subtraction; invalid real errors must fail,
+    # never be converted to an apparently perfect zero loss.
+    pred_s = tf.where(mask_s[..., None] > 0, pred_s, tf.zeros_like(pred_s))
+    tgt_s = tf.where(mask_s[..., None] > 0, tgt_s, tf.zeros_like(tgt_s))
+    masked = tf.debugging.check_numerics(tf.abs(pred_s - tgt_s), "nonfinite OT error")
     denom = tf.reduce_sum(mask_s) * tf.cast(tf.shape(pred)[-1], tf.float32) + 1e-8
-    return tf.reduce_sum(masked) / denom
+    return tf.debugging.check_numerics(
+        tf.reduce_sum(masked) / denom, "nonfinite OT loss")

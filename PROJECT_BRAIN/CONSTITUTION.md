@@ -1,7 +1,7 @@
 # BandStructure AI Project Constitution
 
-Version: 5.0
-Updated: 2026-09-06
+Version: 5.1
+Updated: 2026-09-08
 Status: active project rules
 
 ## 1. Mission
@@ -154,6 +154,8 @@ pipeline 入口合同：`scripts/run_full_pipeline.py` 必须以脚本方式直�
 ## 8. 跨模态扩展路线（P1–P5）
 
 差异化定位（§1）要求按以下顺序扩展，每阶段有明确的前置冻结条件与退出标准；后续阶段不得在前置阶段验收前启动正式实现。
+
+**限域授权记录（2026-09-08）**：依据用户“进行第三阶段”“按 3 → 1 → 2 执行”及“请继续”的批准，允许在 P2 尚未验收时先行进行 P3 探索性实现、纠错和受控对照训练。此例外不表示 P2/P3 已通过，不改变主链，不解除 immutable 资产、GPU-only、inner-only 选模和最终验收规则，也不允许自动越级进入 P4/P5。审计与执行边界见 `agent_logs/20260908_P3_reaudit_attention_execution.md`。
 
 ### P1 结构 sidecar 补全
 
