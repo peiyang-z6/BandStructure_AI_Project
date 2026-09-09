@@ -37,7 +37,18 @@ P1 已完成，P2 检索仍未验收。用户授权先行推进 P3；该限域�
 
 已原地增加可选 k 点自注意力，保持 MLP 对照；实现 inner-only 选模、best/last/accepted 冻结和 evaluation-only。EF 接触、loss 溢出、prepare 完成／冒烟凭据、outer ID/group 互斥和样本轴门禁均已通过独立复审。**本地与服务器完整回归均为 456 passed**；本地 GPU 及服务器双 V100 的真实晶体端到端冒烟均通过，重载预测差为 0。
 
-受控流程已启动：新版全量派生数据 → MLP／两层自注意力对照 → 双方冻结后 outer 评估。共同参数为 seed 42、batch 32、最多 180 epochs；不根据 outer 结果调参。当前仍无本轮最终精度，不能标记 P3 科学验收。保留模型/优化器/epoch 恢复状态，但尚无 CLI resume。逐 k 谱 OT 不等于轨迹匹配，scalar k 不支持物理有效质量结论；正式 Bandformer 同数据对照与完整物理指标仍待完成。
+受控流程已完成并于 **2026-09-09（UTC）完成结果复核**：新版train 47,879条，outer有效11,936条；MLP stop72/best52、两层自注意力stop65/best45。相同数据/inner split、seed42、batch32及训练规则，双方冻结后才做outer评估；不代表等参数量或等实际算力。
+
+| P3 outer指标 | MLP | 两层自注意力 |
+|---|---:|---:|
+| 逐k谱OT MAE（eV） | 4.083630 | 3.951537 |
+| 共同可解析11,893条的gap MAE（eV） | 0.794580 | 0.899375 |
+| 可解析目标零隙上的假gap率 | 31.0217% | 41.4431% |
+| gap可解析覆盖率 | 99.9078% | 99.7319% |
+
+谱误差点估计下降3.23%，但55空间群/2,000次配对bootstrap的差值95%区间跨零；gap与金属诊断退化，**不能称自注意力全面更好或P3验收通过**。45文件（3,319,777,019 bytes）已回传逐文件SHA核验；全量预测重算一致；原V100重放与本机独立重载差均0。本机GPU关键算子、last/optimizer恢复通过，但跨V100/RTX严格逐点等价（rtol=atol=1e−5）未通过，失败保留、未放宽门限。
+
+保留模型/优化器/epoch恢复状态，但尚无CLI resume。逐k谱OT不等于轨迹匹配，scalar k不支持物理有效质量结论；Bandformer同数据对照、P3七拆分/多seed及完整物理指标仍缺。最新记录：[最终结果与限制](PROJECT_BRAIN/agent_logs/20260909_P3_controlled_final_results.md)。
 
 记录：[纠错与审查](PROJECT_BRAIN/agent_logs/20260908_P3_reaudit_attention_execution.md) · [服务器验证与受控流程](PROJECT_BRAIN/agent_logs/20260908_P3_remote_controlled_execution.md)。旧无完成凭据的 P3 NPZ 必须重新 prepare 到新目录，冒烟输入不得作为正式数据。初次服务器环境失败已保留，最终通过没有跳过测试或伪造历史资产。
 

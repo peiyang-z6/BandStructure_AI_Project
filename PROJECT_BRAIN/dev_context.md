@@ -177,8 +177,10 @@ PNG 以 1600×1500 重渲染并完成视觉检查；主图、四卡片、footer 
 - 修正版数据独立保存到 `p3_multiband_v2_20260908/`，旧 P3 及 v4–v7 资产不覆盖。核心六文件与两个入口均完成独立复审，当前源文件 SHA 与审查快照一致；本地及服务器完整回归均为 **456 passed**。
 - 本地 GPU 与服务器两张 V100 的真实晶体端到端 smoke 均通过：重载差均为 0，smoke holdout ID/group overlap 均为 0，权重/预测/凭据 SHA 已读回。服务器 headless、OpenCV/历史资产缺项、conda 激活问题已分别实证修复；未跳过测试，未启用 CPU fallback。该结果不代表正式 outer 精度。
 - checkpoint 保存模型/优化器/epoch 并实测恢复，但无 CLI resume，非空 run 目录不可覆盖。训练侧原子数最大为 50，容量审计不代替新版全量质量与覆盖统计。
-- 受控流程已真实启动：独立全量 prepare → 两张 GPU 上同数据、seed 42、batch 32、最多 180 epochs 的 MLP/两层 attention 对照 → 双方冻结后 outer 评估。完成凭据/中性 final commit 未发布前不放行训练；本轮最终 valid/exclusion 计数与精度尚待结果。
-- 纠错依据见 `agent_logs/20260908_P3_reaudit_attention_execution.md`；最新服务器验证、失败保留与运行合同见 `agent_logs/20260908_P3_remote_controlled_execution.md`。远端源码快照在流程运行中保持冻结，本地文档更新不直接覆盖该快照。
+- 受控流程已完成，2026-09-09（UTC）复核：train原始47,912/有效47,879；outer原始11,987/有效11,936，排除51（39缺结构、7分段不足、5 k距离质量不合格）。相同inner split、seed42、batch32/最多180轮，MLP stop72/best52，attention stop65/best45；双方冻结后才读outer。
+- 谱OT MAE为4.083630/3.951537 eV，配对空间群bootstrap差值区间[-0.463505, 0.476848]跨零。共同可解析11,893条gap MAE为0.794580/0.899375 eV，差值区间[0.036869, 0.152813]；假gap率31.0217%/41.4431%，unknown11/32。谱点估计改善但gap/金属诊断退化，不提升任何P3模型为科学accepted。
+- 45文件共3,319,777,019 bytes已无覆盖回传并逐文件SHA读回，三immutable输入和运行代码一致；全量预测重算一致。最新本地全量456 passed、0 failures/errors/skipped。原V100重放与各环境独立重载差均0；本机GPU关键算子及last/optimizer恢复通过。跨V100/RTX rtol=atol=1e−5严格等价失败保留（最大差MLP0.000900269、attention0.000114202 eV）；未放宽门限，具体跨环境内核归因尚未完成。
+- 纠错见 `agent_logs/20260908_P3_reaudit_attention_execution.md`；运行期合同见 `agent_logs/20260908_P3_remote_controlled_execution.md`；最终证据见 `agent_logs/20260909_P3_controlled_final_results.md`。远端保留训练时源码/治理快照，最终报告及更新文档另存快照，不覆盖旧部署凭据。
 
 ## Next Execution Steps
 
@@ -186,7 +188,7 @@ P0、P1 已完成。P2 检索未验收。P3 按宪法 5.1 的限域授权进行�
 
 1. ✅ **P1 结构 sidecar 补全**：`aflow_structure_sidecar.json`（60,000 记录，ID 与 HDF5 完全对齐）。详见 `agent_logs/20260906_P1_structure_sidecar.md`；
 2. ⚠️ **P2 跨模态检索（未验收）**：脚手架完成（CGCNN + 等变编码器 + InfoNCE + 检索指标）。两版正式训练均未达标：v1 纯 TF CGCNN（train recall@10=0.39 / test recall@1=0.0035 过拟合）、v2 e3nn 等变 + 增强描述子（train recall@10=0.0526 / test recall@10=0.0054，无 OOD 泛化）。原因尚待系统诊断：单一 cosine mean 不能证明或排除 collapse，也不能独自定位 InfoNCE 退化根因。P2 检索留作后续优化；
-3. 🔄 **P3 variable multi-band decoder（进行中、未验收）**：最新状态见 `agent_logs/20260908_P3_remote_controlled_execution.md`。独立复审、本地/服务器 456 项完整回归及双 V100 端到端验证已通过；新版全量数据流程已进入 MLP/自注意力受控训练，双方冻结后才做 outer 评估。尚无本轮最终精度，正式 Bandformer 对照与完整物理指标仍未完成；
+3. ⚠️ **P3 variable multi-band decoder（受控对照完成、阶段未验收）**：最新见 `agent_logs/20260909_P3_controlled_final_results.md`。新数据与两组冻结结果已回传核验；谱点估计改善但gap/金属诊断退化，原机重放通过而跨环境严格逐点等价仍未通过。Bandformer同数据对照、P3七拆分/多seed与完整物理指标仍缺；本轮不自动追加训练或进入P4/P5；
 4. P4 校准不确定性 + 主动获取；
 5. P5 外部验证集（MP/JARVIS source-OOD + 论文/ARPES 图像 + 新 DFT blind test）；
 6. ⏳ 分支远程推送（本地已改名 `v7-60k-20260903`；待 GitHub 凭据解除）。

@@ -157,6 +157,8 @@ pipeline 入口合同：`scripts/run_full_pipeline.py` 必须以脚本方式直�
 
 **限域授权记录（2026-09-08）**：依据用户“进行第三阶段”“按 3 → 1 → 2 执行”及“请继续”的批准，允许在 P2 尚未验收时先行进行 P3 探索性实现、纠错和受控对照训练。此例外不表示 P2/P3 已通过，不改变主链，不解除 immutable 资产、GPU-only、inner-only 选模和最终验收规则，也不允许自动越级进入 P4/P5。审计与执行边界见 `agent_logs/20260908_P3_reaudit_attention_execution.md`。
 
+**执行结果记录（2026-09-09 UTC复核）**：上述seed42受控对照已完成、双方权重冻结及最终预测已核验归档；谱误差点估计改善并不伴随gap/金属诊断改善，跨环境严格逐点等价亦未通过。该记录不变更5.1授权、latest-accepted指针或阶段退出标准，P2/P3仍未科学验收，不放行P4/P5。最终结果与保留失败见 `agent_logs/20260909_P3_controlled_final_results.md`。
+
 ### P1 结构 sidecar 补全
 
 - **不得修改既有 immutable HDF5**；新增只读配对 sidecar，按 material_id 关联。
