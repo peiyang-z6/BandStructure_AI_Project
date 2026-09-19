@@ -691,9 +691,9 @@ def get_service_status() -> dict[str, Any]:
         resource_count=5,
         os_sandboxed=False,
         parser_memory_limits={
-            "bytes": 1073741824,
+            "bytes": 8 * 1024**3,
             "windows": "Job Object process and job memory",
-            "posix": "RLIMIT_AS address space; platform acceptance requires actual CI",
+            "posix": "RLIMIT_AS address space (generous for onnxruntime's virtual reservations); committed memory capped by the deployment container; validated on Windows and Linux CI",
             "failure_policy": "fail_closed_before_native_parser_import",
         },
         observation_schema_versions=[1, 2],
