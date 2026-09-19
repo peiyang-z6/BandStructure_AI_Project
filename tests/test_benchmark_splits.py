@@ -29,6 +29,8 @@ def _samples(n=120):
                 "spacegroup_number": sgs[i % len(sgs)],
                 "formula_pretty": "".join(f"{e}{random.randint(1,3)}" for e in el),
                 "prototype": f"P{i % 7}",
+                "source": "AFLOW",
+                "dft_functional": "PBE",
                 "species": el,
                 "aurl": (
                     f"aflowlib.duke.edu:AFLOWDATA/LIB3_WEB/X/entry{i}"
@@ -41,16 +43,22 @@ def _samples(n=120):
     return out
 
 
+def _canonical(samples):
+    return {f"{part}_material_ids": [s["material_id"] for s in samples
+                                    if (s["spacegroup_number"] < 28) == (part == "train")]
+            for part in ("train", "test")}
+
+
 def test_parse_aurl_catalog_and_functional():
-    assert _parse_aurl("aflowlib.duke.edu:AFLOWDATA/LIB3_WEB/X/e") == ("LIB3_WEB", "PAW_PBE")
-    assert _parse_aurl("aflowlib.duke.edu:AFLOWDATA/ICSD_WEB/FCC/e") == ("ICSD_WEB", "PAW_PBE")
-    assert _parse_aurl("aflowlib.duke.edu:AFLOWDATA/LIB1_WEB/X/e") == ("LIB1_WEB", "PAW_LDA")
-    assert _parse_aurl("") == ("unknown", "PAW_PBE")
+    assert _parse_aurl("aflowlib.duke.edu:AFLOWDATA/LIB3_WEB/X/e") == ("LIB3_WEB", "unknown")
+    assert _parse_aurl("aflowlib.duke.edu:AFLOWDATA/ICSD_WEB/FCC/e") == ("ICSD_WEB", "unknown")
+    assert _parse_aurl("aflowlib.duke.edu:AFLOWDATA/LIB1_WEB/X/e") == ("LIB1_WEB", "unknown")
+    assert _parse_aurl("") == ("unknown", "unknown")
 
 
-def test_composition_key_sorted_element_set():
-    assert _composition_key("Cl1Na1") == "Cl-Na"
-    assert _composition_key("Na1Cl1") == "Cl-Na"
+def test_composition_key_reduced_formula():
+    assert _composition_key("Cl1Na1") == _composition_key("Na1Cl1")
+    assert _composition_key("Na2Cl2") == _composition_key("Na1Cl1")
     assert _composition_key("") == "unknown"
 
 
@@ -62,7 +70,7 @@ def test_prototype_key_prefers_backfilled_prototype():
 
 def test_source_protocol_key():
     s = {"aurl": "aflowlib.duke.edu:AFLOWDATA/ICSD_WEB/FCC/O2_ICSD_173933"}
-    assert _source_protocol_key(s) == "ICSD_WEB|PAW_PBE"
+    assert _source_protocol_key(s) == "unknown|ICSD_WEB|unknown"
 
 
 def test_temporal_year_parse():
@@ -74,7 +82,7 @@ def test_temporal_year_parse():
 def test_all_seven_splits_exist_and_are_disjoint():
     samples = _samples(120)
     sgs = np.asarray([s["spacegroup_number"] for s in samples], dtype=np.int32)
-    splits = build_all_splits(samples, sgs, train_size=0.8, random_state=42)
+    splits = build_all_splits(samples, sgs, train_size=0.8, random_state=42, canonical_split=_canonical(samples))
     assert set(splits.keys()) == {
         "random",
         "space_group",
@@ -94,7 +102,7 @@ def test_all_seven_splits_exist_and_are_disjoint():
 def test_spacegroup_split_has_no_group_overlap():
     samples = _samples(200)
     sgs = np.asarray([s["spacegroup_number"] for s in samples], dtype=np.int32)
-    splits = build_all_splits(samples, sgs, train_size=0.8, random_state=42)
+    splits = build_all_splits(samples, sgs, train_size=0.8, random_state=42, canonical_split=_canonical(samples))
     split = splits["space_group"]
     train_sgs = set(sgs[split["train_idx"]].tolist())
     test_sgs = set(sgs[split["test_idx"]].tolist())
@@ -104,7 +112,7 @@ def test_spacegroup_split_has_no_group_overlap():
 def test_composition_split_has_no_composition_overlap():
     samples = _samples(200)
     sgs = np.asarray([s["spacegroup_number"] for s in samples], dtype=np.int32)
-    splits = build_all_splits(samples, sgs, train_size=0.8, random_state=42)
+    splits = build_all_splits(samples, sgs, train_size=0.8, random_state=42, canonical_split=_canonical(samples))
     split = splits["composition"]
     def keys(idx):
         return {_composition_key(samples[i]["formula_pretty"]) for i in idx}
@@ -122,10 +130,10 @@ def test_temporal_split_is_chronological():
     assert max(train_dated) <= min(test_dates)
 
 
-def test_temporal_split_puts_undated_samples_in_train():
+def test_temporal_split_excludes_undated_samples():
     samples = _samples(60)
     samples[5]["aflowlib_date"] = ""
     samples[9]["aflowlib_date"] = None
     split = build_temporal_split(samples, 0.8, np.random.RandomState(42))
     for i in (5, 9):
-        assert i in split[0], f"undated sample {i} must be in train"
+        assert i not in set(split[0]) | set(split[1]), f"undated sample {i} must be excluded"

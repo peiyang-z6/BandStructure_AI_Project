@@ -4,6 +4,8 @@ import inspect
 import json
 import re
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -41,7 +43,7 @@ def test_runtime_root_contains_no_legacy_artifact_roots_or_references():
 def test_runtime_code_contains_no_deprecated_root_paths():
     deprecated = [
         re.compile(r"data_cache"),
-        re.compile(r"(?<!artifacts/)models/"),
+        re.compile(r"(?<!artifacts/)(?<!src/)models/"),
         re.compile(r"(?<!artifacts/)reports/"),
         re.compile(r"(?<!artifacts/)checkpoints/"),
         re.compile(r"(?<!artifacts/)logs/"),
@@ -56,6 +58,29 @@ def test_runtime_code_contains_no_deprecated_root_paths():
                 if pattern.search(text):
                     violations.append(f"{path.relative_to(ROOT)}: {pattern.pattern}")
     assert violations == []
+
+
+@pytest.mark.parametrize("reference", [
+    '"src/models/encoder.py"', 'ROOT / "src/models/encoder.py"',
+    '"artifacts/models/accepted.weights.h5"',
+])
+def test_layout_audit_allows_classified_model_paths(tmp_path, monkeypatch, reference):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "probe.py").write_text(f"reference = {reference}\n", encoding="utf-8")
+    monkeypatch.setitem(globals(), "ROOT", tmp_path)
+    test_runtime_code_contains_no_deprecated_root_paths()
+
+
+@pytest.mark.parametrize("reference", [
+    '"models/old.h5"', '"reports/old.json"', '"checkpoints/old.h5"',
+    '"logs/old.txt"', '"runs/old"', '"data_cache/old.npz"', 'ROOT / "models"',
+])
+def test_layout_audit_still_rejects_deprecated_paths(tmp_path, monkeypatch, reference):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "probe.py").write_text(f"reference = {reference}\n", encoding="utf-8")
+    monkeypatch.setitem(globals(), "ROOT", tmp_path)
+    with pytest.raises(AssertionError):
+        test_runtime_code_contains_no_deprecated_root_paths()
 
 
 def test_brain_invoker_defaults_resolve_to_latest_formal_artifacts():

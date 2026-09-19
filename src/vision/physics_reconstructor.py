@@ -60,7 +60,10 @@ class PhysicsReconstructor:
         vbm_idx = int(np.argmax(vbm_energy))
         cbm_idx = int(np.argmin(cbm_energy))
         tensor_gap = float(cbm_energy[cbm_idx] - vbm_energy[vbm_idx])
-        is_metallic = bool(tensor_gap <= self.metal_threshold_ev or self._fermi_crosses_band(vbm_energy, cbm_energy))
+        is_metallic = bool(
+            tensor_gap <= self.metal_threshold_ev
+            or self._fermi_crosses_band(vbm_energy, cbm_energy)
+        )
 
         vbm_curv = self._local_quadratic_curvature(k_axis, vbm_energy)
         cbm_curv = self._local_quadratic_curvature(k_axis, cbm_energy)
@@ -74,7 +77,11 @@ class PhysicsReconstructor:
             ],
             axis=0,
         )[None, ...].astype(np.float32)
-        flat_tensor = np.transpose(raw_tensor, (0, 2, 1, 3)).reshape(1, self.target_k_points, 6).astype(np.float32)
+        flat_tensor = (
+            np.transpose(raw_tensor, (0, 2, 1, 3))
+            .reshape(1, self.target_k_points, 6)
+            .astype(np.float32)
+        )
 
         return ReconstructedTensor(
             raw_tensor=raw_tensor,
@@ -144,9 +151,7 @@ class PhysicsReconstructor:
         x_scale = delta_x_value / delta_x_pixel
         if fermi_y_pixel is None:
             fermi_y_pixel = float(y0["y"]) + (0.0 - float(y0["value"])) / y_scale
-        raw_fermi_energy = float(y0["value"]) + (
-            float(fermi_y_pixel) - float(y0["y"])
-        ) * y_scale
+        raw_fermi_energy = float(y0["value"]) + (float(fermi_y_pixel) - float(y0["y"])) * y_scale
 
         def pixel_to_physics(point: Dict[str, float]) -> tuple[float, float]:
             k = float(x0["value"]) + (float(point["x"]) - float(x0["x"])) * x_scale
@@ -181,7 +186,11 @@ class PhysicsReconstructor:
             ],
             axis=0,
         )[None, ...].astype(np.float32)
-        flat_tensor = np.transpose(raw_tensor, (0, 2, 1, 3)).reshape(1, self.target_k_points, 6).astype(np.float32)
+        flat_tensor = (
+            np.transpose(raw_tensor, (0, 2, 1, 3))
+            .reshape(1, self.target_k_points, 6)
+            .astype(np.float32)
+        )
 
         meta = dict(metadata or {})
         meta.update(
@@ -215,7 +224,9 @@ class PhysicsReconstructor:
             metadata=meta,
         )
 
-    def _resample_manual_trace(self, pairs: List[tuple[float, float]], k_axis: np.ndarray, mode: str) -> np.ndarray:
+    def _resample_manual_trace(
+        self, pairs: List[tuple[float, float]], k_axis: np.ndarray, mode: str
+    ) -> np.ndarray:
         arr = np.asarray(pairs, dtype=np.float32)
         arr = arr[np.isfinite(arr).all(axis=1)]
         arr[:, 0] = np.clip(arr[:, 0], 0.0, 1.0)
@@ -226,7 +237,9 @@ class PhysicsReconstructor:
         for k_val in np.unique(arr[:, 0]):
             local = arr[np.isclose(arr[:, 0], k_val)]
             unique_k.append(float(k_val))
-            unique_e.append(float(np.max(local[:, 1]) if mode == "valence" else np.min(local[:, 1])))
+            unique_e.append(
+                float(np.max(local[:, 1]) if mode == "valence" else np.min(local[:, 1]))
+            )
         k = np.asarray(unique_k, dtype=np.float32)
         e = np.asarray(unique_e, dtype=np.float32)
         if len(k) < 2:
@@ -244,7 +257,9 @@ class PhysicsReconstructor:
             values = np.interp(k_axis, k, e)
         return np.nan_to_num(values, nan=float(np.nanmedian(e))).astype(np.float32)
 
-    def _split_valence_conduction(self, k: np.ndarray, energy: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    def _split_valence_conduction(
+        self, k: np.ndarray, energy: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         vb_mask = energy <= 0.0
         cb_mask = energy >= 0.0
         guarded_cb_mask = energy >= self.conduction_guard_ev
@@ -262,7 +277,9 @@ class PhysicsReconstructor:
             raise ValueError("Could not separate enough valence/conduction points around E_F")
         return vb_k, vb_e, cb_k, cb_e
 
-    def _aggregate_extreme_by_k(self, k: np.ndarray, energy: np.ndarray, mode: str) -> Tuple[np.ndarray, np.ndarray]:
+    def _aggregate_extreme_by_k(
+        self, k: np.ndarray, energy: np.ndarray, mode: str
+    ) -> Tuple[np.ndarray, np.ndarray]:
         bins = np.linspace(0.0, 1.0, min(self.target_k_points, max(16, len(k) // 3)) + 1)
         inds = np.clip(np.digitize(k, bins) - 1, 0, len(bins) - 2)
         out_k: List[float] = []
@@ -277,9 +294,13 @@ class PhysicsReconstructor:
             out_k.append(float(local_k[select]))
             out_e.append(float(local_e[select]))
         order = np.argsort(out_k)
-        return np.asarray(out_k, dtype=np.float32)[order], np.asarray(out_e, dtype=np.float32)[order]
+        return np.asarray(out_k, dtype=np.float32)[order], np.asarray(out_e, dtype=np.float32)[
+            order
+        ]
 
-    def _resample_band(self, k: np.ndarray, energy: np.ndarray, k_axis: np.ndarray, mode: str) -> np.ndarray:
+    def _resample_band(
+        self, k: np.ndarray, energy: np.ndarray, k_axis: np.ndarray, mode: str
+    ) -> np.ndarray:
         k_unique, inv = np.unique(k, return_inverse=True)
         if len(k_unique) == 1:
             return np.full_like(k_axis, float(energy[0]), dtype=np.float32)
@@ -297,8 +318,18 @@ class PhysicsReconstructor:
             k_eval = np.clip(k_axis, float(k_unique[0]), float(k_unique[-1]))
             values = spline(k_eval)
         else:
-            values = interp1d(k_unique, reduced, bounds_error=False, fill_value=(float(reduced[0]), float(reduced[-1])))(k_axis)
-        values = np.nan_to_num(values, nan=float(np.nanmedian(reduced)), posinf=float(np.nanmax(reduced)), neginf=float(np.nanmin(reduced)))
+            values = interp1d(
+                k_unique,
+                reduced,
+                bounds_error=False,
+                fill_value=(float(reduced[0]), float(reduced[-1])),
+            )(k_axis)
+        values = np.nan_to_num(
+            values,
+            nan=float(np.nanmedian(reduced)),
+            posinf=float(np.nanmax(reduced)),
+            neginf=float(np.nanmin(reduced)),
+        )
         values = np.clip(values, -self._vision_energy_clip(), self._vision_energy_clip())
         return self._smooth_resampled_trace(values.astype(np.float32))
 
@@ -307,7 +338,9 @@ class PhysicsReconstructor:
             return values.astype(np.float32)
         pad = window // 2
         padded = np.pad(values, (pad, pad), mode="edge")
-        med = np.asarray([np.median(padded[i : i + window]) for i in range(len(values))], dtype=np.float32)
+        med = np.asarray(
+            [np.median(padded[i : i + window]) for i in range(len(values))], dtype=np.float32
+        )
         kernel = np.ones(window, dtype=np.float32) / float(window)
         avg = np.convolve(np.pad(med, (pad, pad), mode="edge"), kernel, mode="valid")
         return avg.astype(np.float32)
@@ -315,7 +348,9 @@ class PhysicsReconstructor:
     def _vision_energy_clip(self) -> float:
         return 60.0
 
-    def _local_quadratic_curvature(self, k_axis: np.ndarray, energy: np.ndarray, half_window: int = 2) -> np.ndarray:
+    def _local_quadratic_curvature(
+        self, k_axis: np.ndarray, energy: np.ndarray, half_window: int = 2
+    ) -> np.ndarray:
         curv = np.zeros_like(energy, dtype=np.float32)
         n = len(energy)
         for idx in range(n):

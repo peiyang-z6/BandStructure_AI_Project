@@ -1,0 +1,31 @@
+{
+  "schema_version": 2,
+  "source": {
+    "document_id": "synthetic:reference-aware-contract-demo",
+    "page_number": 1,
+    "panel_label": "a",
+    "material_label": "synthetic-not-a-real-material"
+  },
+  "energy_unit": "eV",
+  "energy_reference": {
+    "kind": "vbm",
+    "value_eV": 0,
+    "observed": true,
+    "evidence": "Synthetic example explicitly defines the VBM reference; this is not a paper observation."
+  },
+  "k_unit": "relative",
+  "k_distance": [0, 0.5, 1, 0, 0.5, 1],
+  "segment_ids": [0, 0, 0, 1, 1, 1],
+  "path_segments": [
+    {"segment_id": 0, "start_label": "Γ", "end_label": "X"},
+    {"segment_id": 1, "start_label": "W", "end_label": "L"}
+  ],
+  "bands": [
+    {"band_id": "v1", "role": "valence", "energies_eV": [-1, 0, -1, -1, 0, -1]},
+    {"band_id": "v2", "role": "valence", "energies_eV": [-2, -1, -2, -2, -1, -2]},
+    {"band_id": "c1", "role": "conduction", "energies_eV": [4, 3, 4, 4, null, 4]}
+  ],
+  "calibration_evidence": {"energy_tick_count": 3, "k_anchor_count": 4},
+  "ambiguities": ["One deliberately missing sample demonstrates partial export, without interpolation."],
+  "human_confirmed": false
+}

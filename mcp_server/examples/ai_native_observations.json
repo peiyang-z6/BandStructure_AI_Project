@@ -1,0 +1,32 @@
+{
+  "source": {
+    "document_id": "attachment:replace-with-opaque-id",
+    "page_number": 1,
+    "panel_label": "(a)",
+    "figure_label": "Figure 1(a)",
+    "material_label": "synthetic"
+  },
+  "energy_unit": "eV",
+  "fermi_eV": 0.0,
+  "k_unit": "relative",
+  "k_distance": [0.0, 0.5, 1.0],
+  "segment_ids": [0, 0, 0],
+  "bands": [
+    {
+      "role": "valence",
+      "energies_eV": [-2.0, -1.0, -2.0]
+    },
+    {
+      "role": "conduction",
+      "energies_eV": [2.0, 1.0, 2.0]
+    }
+  ],
+  "calibration_evidence": {
+    "energy_tick_count": 3,
+    "k_anchor_count": 3,
+    "fermi_reference_observed": true
+  },
+  "ambiguities": [],
+  "perception_confidence": 0.9,
+  "human_confirmed": false
+}

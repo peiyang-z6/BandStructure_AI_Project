@@ -34,7 +34,58 @@ sys.path.insert(0, str(ROOT))
 
 from src.data.benchmark_splits import build_spacegroup_split
 from src.models.multiband_decoder import MultiBandDecoder, sorted_masked_mae
-from src.utils.selection_manifest import sha256_file, validate_inner_selection_manifest
+from src.utils.selection_manifest import (
+    sha256_file,
+    validate_inner_selection_manifest as _validate_selection_manifest,
+)
+
+
+def validate_inner_selection_manifest(output_dir):
+    """P3 selection-format-v1 compatibility, not P0 three-task certification.
+
+    The shared classifier gate keeps its formal default. Full P3 evaluation
+    additionally validates frozen config, split, preparation and code below.
+    Record shapes identify the existing P3 format, not historical training
+    provenance or authenticity of its runtime claims.
+    """
+    manifest = _validate_selection_manifest(output_dir, mode="legacy")
+    if (type(manifest.get("schema_version")) is not int
+            or manifest["schema_version"] != 1
+            or manifest.get("experimental") is not True
+            or manifest.get("mode") not in ("smoke", "formal")):
+        raise RuntimeError("Expected experimental P3 selection-format-v1 (smoke/formal)")
+    for field in ("model_config", "inner_split", "history", "runtime"):
+        if not isinstance(manifest.get(field), dict) or not manifest[field]:
+            raise RuntimeError(f"P3 selection-format-v1 requires nonempty {field}")
+    for field in ("model_config", "inner_split", "history"):
+        record = manifest[field]
+        if (not isinstance(record.get("path"), str) or not record["path"].strip()
+                or type(record.get("bytes")) is not int or record["bytes"] <= 0
+                or not isinstance(record.get("sha256"), str) or len(record["sha256"]) != 64
+                or any(c not in "0123456789abcdef" for c in record["sha256"])):
+            raise RuntimeError(f"P3 selection-format-v1 requires a typed {field} artifact record")
+    runtime = manifest["runtime"]
+    if (runtime.get("device") not in ("/CPU:0", "/GPU:0")
+            or runtime.get("data_residency") != "host_numpy"
+            or type(runtime.get("max_batch_size")) is not int or runtime["max_batch_size"] <= 0
+            or not isinstance(runtime.get("tensorflow"), str) or not runtime["tensorflow"].strip()
+            or type(runtime.get("optimizer_clipnorm")) not in (int, float)
+            or not math.isfinite(runtime["optimizer_clipnorm"]) or runtime["optimizer_clipnorm"] <= 0
+            or any(not isinstance(runtime.get(key), dict) or not runtime[key]
+                   for key in ("preflight", "compiled_train"))):
+        raise RuntimeError("P3 selection-format-v1 requires a typed runtime record")
+    for stage, flag in (("preflight", "finite"), ("compiled_train", "finite_checked_in_graph")):
+        record = runtime[stage]
+        devices = record.get("gradient_devices")
+        if (record.get(flag) is not True
+                or type(record.get("gradient_count")) is not int or record["gradient_count"] <= 0
+                or not isinstance(devices, list) or not devices
+                or any(not isinstance(d, str) or not d.strip() for d in devices)
+                or any(not isinstance(record.get(key), str) or not record[key].strip()
+                       for key in ("prediction_device", "loss_device"))):
+            raise RuntimeError(f"P3 selection-format-v1 requires typed runtime {stage}")
+    return manifest
+
 
 GRAPH_KEYS = ("atom_features", "neighbor_list", "neighbor_dist", "segment_ids")
 BATCH_DTYPES = {

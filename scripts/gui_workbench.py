@@ -873,6 +873,7 @@ class BandStructureWorkbench:
                   foreground=[("selected", "white")])
 
         self._current_file_path = ""
+        self._current_source_sha256 = None
         self._canvas_w, self._canvas_h = CANVAS_W, CANVAS_H
         self._toolbar: Optional[FloatingToolbar] = None
         self._state_store = WorkbenchStateStore()
@@ -983,6 +984,7 @@ class BandStructureWorkbench:
         self._notebook = ttk.Notebook(right_container)
         self._notebook.pack(fill="both", expand=True)
         self._build_recognition_tab()
+        self._build_retrieval_tab()
         self._build_training_tab()
         main.add(right_container, minsize=350, stretch="never")
 
@@ -1028,6 +1030,70 @@ class BandStructureWorkbench:
                                   "This panel shows a quick preview.")
 
         self._update_gap_badge_loop()
+
+    def _build_retrieval_tab(self):
+        tab = ttk.Frame(self._notebook)
+        self._notebook.add(tab, text="  ANN Retrieval  ")
+        panel = tk.Frame(tab, bg=BG)
+        panel.pack(fill='both', expand=True, padx=5, pady=5)
+        tk.Label(panel, text='P2: band-band retrieval + paired structures\n'
+                 'Cosine similarity is uncalibrated, not probability.\n'
+                 'Requires a locally generated trusted index (no binary upload).',
+                 bg=BG, fg=TEXT_DIM, justify='left', wraplength=330).pack(fill='x')
+        self._retrieval_manual_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(panel, text='I confirm manual axes/Fermi/curves/extrema\n'
+                       'for ONE continuous k segment (not an external audit)',
+                       variable=self._retrieval_manual_var, bg=BG, fg=FG,
+                       selectcolor=BG, justify='left', wraplength=330).pack(fill='x', pady=5)
+        self._retrieval_button = self._mk_btn(panel, 'Query similar materials (ANN)',
+                                               self._submit_retrieval, bg=ACCENT, fg='white')
+        self._retrieval_button.pack(fill='x', pady=5)
+        self._retrieval_result = tk.Text(panel, bg='#161b22', fg=FG, wrap='word',
+                                         relief='flat', font=('Consolas', 9))
+        self._retrieval_result.pack(fill='both', expand=True)
+        self._last_retrieval_result = None
+        for variable in (self._x1_var, self._x2_var, self._y1_var, self._y2_var):
+            variable.trace_add('write', lambda *_: self._schedule_state_save())
+
+    def _submit_retrieval(self):
+        """Use operator-installed JSON config, never the image upload as an index.
+
+        BANDSTRUCTURE_P2_QUERY_CONFIG points to a trusted local JSON with explicit
+        store_root, index_name, encoder_path and norm_path. No implicit fallback
+        to supervised weights, legacy normalization or fabricated neighbors.
+        """
+        self._last_retrieval_result = None
+        self._retrieval_result.delete('1.0', 'end')
+        try:
+            if not self._retrieval_manual_var.get():
+                raise ValueError('manual calibration confirmation required for this image')
+            config_path = os.environ.get('BANDSTRUCTURE_P2_QUERY_CONFIG')
+            if not config_path:
+                raise ValueError('No valid ANN index configured. Set BANDSTRUCTURE_P2_QUERY_CONFIG '
+                                 'to an operator-controlled local config; do not upload an index binary.')
+            config = json.loads(Path(config_path).read_text(encoding='utf-8'))
+            required = {'store_root', 'index_name', 'encoder_path', 'norm_path'}
+            if not isinstance(config, dict) or set(config) != required:
+                raise ValueError('ANN config requires exactly: ' + ', '.join(sorted(required)))
+            from src.vision.brain_invoker import P2RetrievalInvoker
+            invoker = P2RetrievalInvoker(**config)
+            result = invoker.query_manual(
+                self._current_file_path, json.loads(self._canvas.get_annotation_json()),
+                {'y_values': [self._y1_var.get(), self._y2_var.get()],
+                 'x_values': [self._x1_var.get(), self._x2_var.get()]},
+                manual_confirmed=True, k=5, expected_image_sha256=self._current_source_sha256)
+            lines = ['P2 band-band retrieval; returned structures are paired records.',
+                     'uncalibrated cosine similarity — not probability; no calibrated rejection guarantee.', '']
+            for item in result['candidates']:
+                lines.extend([f"{item['rank']}. {item['material_id']}  {item.get('formula', '')}",
+                              f"cosine similarity: {item['similarity']:.6f}",
+                              'paired structure: ' + json.dumps(item['structure'], ensure_ascii=False), ''])
+            self._last_retrieval_result = result
+            self._retrieval_result.insert('1.0', '\n'.join(lines))
+            self._set_status('ANN query complete — uncalibrated similarity only.')
+        except Exception as exc:
+            self._retrieval_result.insert('1.0', 'ANN unavailable / query rejected:\n' + str(exc))
+            self._set_status('ANN query failed; no retrieval result.')
 
     def _build_training_tab(self):
         tab = ttk.Frame(self._notebook)
@@ -1078,16 +1144,22 @@ class BandStructureWorkbench:
         # Persist the previous image's session before switching away from it.
         self._autosave_state()
         try:
+            # Decode and hash one immutable snapshot. A later path replacement
+            # must never assign NEW-file provenance to OLD displayed pixels.
+            source_bytes = Path(path).read_bytes()
+            source_sha = hashlib.sha256(source_bytes).hexdigest()
             if path.lower().endswith(".pdf"):
-                pil_img = self._render_pdf_to_pil(path)
+                pil_img = self._render_pdf_to_pil(path, source_bytes=source_bytes)
                 self._canvas.load_image(pil_img)
             else:
-                pil_img = Image.open(path).convert("RGB")
+                from src.evaluation.retrieval import decode_raster_bytes
+                pil_img = decode_raster_bytes(source_bytes)
                 self._canvas.load_image(pil_img)
         except Exception as e:
             messagebox.showerror("Error", str(e))
             return
         self._current_file_path = path
+        self._current_source_sha256 = source_sha
         self._current_image_key = WorkbenchStateStore.image_key(pil_img)
         self._canvas_w, self._canvas_h = self._canvas.get_canvas_dims()
         self._sync_zoom_label()
@@ -1097,15 +1169,17 @@ class BandStructureWorkbench:
         self._restore_state_if_present()
         self.root.after(100, lambda: self._run_cv(path))
 
-    def _render_pdf_to_pil(self, path: str) -> "Image.Image":
+    def _render_pdf_to_pil(self, path: str, *, source_bytes=None) -> "Image.Image":
+        if source_bytes is None:
+            source_bytes = Path(path).read_bytes()
         try:
             import fitz
-            doc = fitz.open(path)
+            doc = fitz.open(stream=source_bytes, filetype='pdf')
             pix = doc[0].get_pixmap(dpi=200)
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
             doc.close()
         except ImportError:
-            img = Image.open(path).convert("RGB")
+            img = Image.open(io.BytesIO(source_bytes)).convert("RGB")
         return img
 
     def _load_pdf(self, path: str):
@@ -1115,6 +1189,11 @@ class BandStructureWorkbench:
     # ── Session persistence (Phase 6 P1) ─────────────────────────────────
     def _schedule_state_save(self):
         """Debounced autosave after annotation/calibration changes."""
+        if hasattr(self, '_retrieval_manual_var'):
+            self._retrieval_manual_var.set(False)
+            self._last_retrieval_result = None
+            self._retrieval_result.delete('1.0', 'end')
+            self._retrieval_result.insert('1.0', 'Input changed: recheck manual calibration before ANN query.')
         if self._save_after_id is not None:
             self.root.after_cancel(self._save_after_id)
         self._save_after_id = self.root.after(800, self._autosave_state)

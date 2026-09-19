@@ -1,0 +1,26 @@
+recursive-include docs *.md
+include README.en.md CONTRIBUTING.md Dockerfile compose.yaml .dockerignore .env.example
+recursive-include docker *.txt
+recursive-include research/historical_training *.py *.json *.md
+recursive-include docs/figures *.svg *.png *.json
+recursive-include .github *.yml
+include .gitignore
+include mcp_server/README.md
+include scripts/demo_mcp_client.py
+include scripts/generate_mcp_client_configs.py
+include scripts/run_mcp_tests.py
+include scripts/verify_mcp_attachments.py
+include scripts/verify_six_papers.py
+include scripts/prepare_mcp_release.py
+include scripts/render_paper_figures.py
+include scripts/verify_http.py scripts/start.ps1 scripts/start.sh
+include scripts/export_oa_visual_review.py
+include scripts/mcp_human_review_workbench.py
+exclude tests/test*.py
+include tests/test_mcp*.py
+include tests/test_figure_candidate*.py
+include tests/test_visual_batch_review.py
+global-exclude *.pyc *.pyo
+prune artifacts
+prune data
+prune PROJECT_BRAIN

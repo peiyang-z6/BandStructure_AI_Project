@@ -1,33 +1,22 @@
-"""P1 structure sidecar downloader.
+"""P1 v2: offline read-only audit or create-only enrichment; explicit download opt-in.
 
-Constitution 5.0 §8 P1: build a read-only pairing sidecar keyed by
-material_id storing lattice 3x3, species, fractional_coordinates,
-magnetic/spin, DFT functional/U/pseudopotential, reciprocal lattice, 3D
-fractional k-points, k-path convention, source and a structure SHA-256. The
-immutable aflow_bands.h5 is never modified.
+Examples (run from the project root; choose NEW version paths):
+  python scripts/build_structure_sidecar.py --mode audit --h5 BAND_CACHE.h5 \
+      --sidecar LEGACY.json --out NEW_QUALITY.v2.json
+  python scripts/build_structure_sidecar.py --mode enrich --ids-json FIXED_IDS.json \
+      --sidecar LEGACY.json --conventions-json CONVENTIONS.json --out NEW_SIDECAR.v2.json
 
-Two data paths (both verified reachable 2026-09-06):
-  1. AFLUX bulk paging (SAME query fingerprint as the 60k download) returns
-     geometry / positions_fractional / species / dft_type / spin_cell /
-     spin_atom / species_pp / kpoints_bands_path / kpoints / code / aurl.
-     This covers lattice, species, fractional coords, functional, spin,
-     pseudopotential and k-path convention in ~207 pages.
-  2. KPOINTS.bands per-AURL (line-mode segment 3D endpoints) fills the 3D
-     fractional k-points field that AFLUX bulk does not return. Optional
-     (--with-kpoints); each file is ~1 KB.
+Audit opens only HDF5 root keys, never energies or other datasets. --ids-json
+avoids opening HDF5 at all. Both ID and per-field quality counts are emitted.
+Enrich creates a JSON record list plus <out_stem>_report.json; neither output may
+already exist. Missing legacy units/basis are not inferred: without an explicit
+conventions declaration, the v2 structure digest is absent and legacy integrity
+is reported separately. A declaration is not independent source verification.
 
-Output: aflow_structure_sidecar.json (one record per material) +
-aflow_structure_sidecar_report.json (per-field coverage + missing-field
-breakdown). Coverage audit compares the sidecar material_id set against the
-HDF5 group set.
-
-Usage:
-    python scripts/build_structure_sidecar.py \
-        --h5 data/raw/aflow/snapshots/aflow_60000_20260831/aflow_bands.h5 \
-        --metadata data/raw/aflow/snapshots/aflow_60000_20260831/aflow_metadata.json \
-        --out data/raw/aflow/snapshots/aflow_60000_20260831/aflow_structure_sidecar.json \
-        --min-gap 0.0 --max-gap 5.0 --max-sites 50 --page-size 500 \
-        [--workers 6] [--with-kpoints --kpoints-workers 8]
+--mode download retains the historical fixed AFLUX Egap(0*,*5),natoms(1*,*50)
+query and optional KPOINTS.bands endpoint fetch. It must be explicitly selected;
+it is NOT exercised by offline audit/enrich. Endpoint syntax and segment counts
+never establish dense pointwise alignment or primitive/conventional cell basis.
 """
 from __future__ import annotations
 
@@ -151,46 +140,9 @@ def fetch_kpoints_bits(aurl: str, retries: int = 6) -> Optional[Dict[str, Any]]:
 
 
 def parse_kpoints_bands(text: str) -> Dict[str, Any]:
-    """Parse VASP line-mode KPOINTS.bands into 3D segment endpoints.
-
-    Returns {path_line, nkpts, segments: [{label_from, label_to,
-    k_from: [x,y,z], k_to: [x,y,z]}]}.
-    """
-    lines = [ln for ln in text.splitlines() if ln.strip()]
-    if len(lines) < 5:
-        return {"error": "too short"}
-    header = lines[0].strip()
-    nkpts = None
-    # VASP line-mode: line 0 = path header, line 1 = "N  !  N grids"
-    if len(lines) > 1:
-        grid_line = lines[1].split("!")[0].strip().split()
-        if grid_line:
-            try:
-                nkpts = int(grid_line[0])
-            except ValueError:
-                nkpts = None
-    segments: List[Dict[str, Any]] = []
-    i = 4  # skip header, nkpts, 'Line-mode', 'reciprocal'
-    while i + 1 < len(lines):
-        a_line = lines[i]
-        b_line = lines[i + 1]
-        def _parse_pt(ln: str):
-            parts = ln.split("!")
-            coord = parts[0].split()
-            label = parts[1].strip() if len(parts) > 1 else None
-            if len(coord) < 3:
-                return None, label
-            return [float(x) for x in coord[:3]], label
-        a_pt, a_label = _parse_pt(a_line)
-        b_pt, b_label = _parse_pt(b_line)
-        if a_pt is not None and b_pt is not None:
-            segments.append({
-                "label_from": a_label, "label_to": b_label,
-                "k_from": a_pt, "k_to": b_pt,
-            })
-        i += 2  # blank lines already filtered; segment endpoints are consecutive
-    return {"path_line": header, "nkpts": nkpts, "segments": segments}
-
+    """Compatibility entry: strict endpoint parser, never a dense-k certificate."""
+    from src.data.structure_sidecar import parse_kpoints_bands as parse
+    return parse(text)
 
 def build_records(
     h5_path: str, bulk_rows: List[Dict[str, Any]], with_kpoints: bool, kworkers: int,
@@ -203,16 +155,18 @@ def build_records(
     print(f"[P1] HDF5 groups: {len(h5_ids)}", flush=True)
 
     records: List[Dict[str, Any]] = []
+    from src.data.structure_sidecar import aflow_auid_to_material_id
     seen: set[str] = set()
+    clipped = []
     for row in bulk_rows:
-        rec = sidecar_record_from_aflow_fields(row)
-        mid = rec.get("material_id")
-        if not mid or mid in seen:
-            continue
-        if mid not in h5_ids:
-            continue  # only keep IDs present in the immutable band HDF5
+        mid = aflow_auid_to_material_id(row.get("auid"))
+        if mid in seen:
+            raise ValueError(f"duplicate incoming material_id: {mid}")
         seen.add(mid)
-        records.append(rec)
+        if mid not in h5_ids:
+            clipped.append(mid)
+            continue
+        records.append(sidecar_record_from_aflow_fields(row))
 
     # Optional: fill 3D k-points from KPOINTS.bands.
     if with_kpoints:
@@ -221,82 +175,100 @@ def build_records(
         with concurrent.futures.ThreadPoolExecutor(max_workers=kworkers) as pool:
             futs = {pool.submit(fetch_kpoints_bits, aurl): mid
                     for mid, aurl in to_fetch if aurl}
+            by_id = {r["material_id"]: r for r in records}
             for future in concurrent.futures.as_completed(futs):
                 mid = futs[future]
+                record = by_id[mid]
                 try:
                     bits = future.result()
-                    for r in records:
-                        if r["material_id"] == mid:
-                            if "error" not in bits:
-                                r["kpoints_3d"] = bits
-                                if "kpoints_3d" in r["missing_fields"]:
-                                    r["missing_fields"].remove("kpoints_3d")
-                            break
-                except Exception:
-                    pass
+                    if not isinstance(bits, dict):
+                        raise ValueError("empty KPOINTS response")
+                    if "error" in bits and bits.get("verification_status") != "invalid":
+                        record.setdefault("field_read_errors", {})["kpoints_3d"] = bits["error"]
+                    else:
+                        record["kpoints_3d"] = bits
+                except Exception as exc:
+                    record.setdefault("field_read_errors", {})["kpoints_3d"] = str(exc)
                 done += 1
                 if done % 1000 == 0:
                     print(f"[P1] kpoints {done}/{len(to_fetch)} ...", flush=True)
 
+    from src.data.structure_sidecar import enrich_structure_record
+    records = [enrich_structure_record(r) for r in records]
     report = coverage_report(records, h5_ids)
+    report["clipped_incoming_ids"] = sorted(clipped)
     return records, report
 
 
 def coverage_report(records: List[Dict[str, Any]], h5_ids: set[str]) -> Dict[str, Any]:
-    fields = [
-        "lattice", "species", "fractional_coordinates", "dft_functional",
-        "spin_cell", "spin_atom", "pseudopotential", "reciprocal_lattice",
-        "kpath_segments", "structure_sha256", "kpoints_3d",
-    ]
-    total = len(records)
-    present = {f: sum(1 for r in records if r.get(f) is not None) for f in fields}
-    missing_breakdown: Dict[str, int] = {}
-    for r in records:
-        for f in r.get("missing_fields", []):
-            missing_breakdown[f] = missing_breakdown.get(f, 0) + 1
-    return {
-        "sidecar_records": total,
-        "hdf5_groups": len(h5_ids),
-        "h5_ids_missing_in_sidecar": len(h5_ids - {r["material_id"] for r in records}),
-        "sidecar_ids_not_in_h5": len({r["material_id"] for r in records} - h5_ids),
-        "field_present": present,
-        "missing_field_breakdown": missing_breakdown,
-    }
+    from src.data.structure_sidecar import build_quality_ledger
+    return build_quality_ledger(records, h5_ids)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Build P1 structure sidecar")
-    parser.add_argument("--h5", required=True)
-    parser.add_argument("--metadata", required=True)
-    parser.add_argument("--out", required=True)
-    parser.add_argument("--min-gap", type=float, default=0.0)
-    parser.add_argument("--max-gap", type=float, default=5.0)
-    parser.add_argument("--max-sites", type=int, default=50)
+def main(argv=None) -> None:
+    from pathlib import Path
+    from src.data.structure_sidecar import (
+        assert_new_outputs, atomic_write_json, load_fixed_ids,
+        load_sidecar_records, merge_sidecar_records, StructureSidecarSchema,
+    )
+    parser = argparse.ArgumentParser(description="P1 v2 read-only audit / new-version enrich / explicit download")
+    parser.add_argument("--mode", choices=("audit", "enrich", "download"), default="audit")
+    fixed = parser.add_mutually_exclusive_group(required=True)
+    fixed.add_argument("--h5", help="read root keys ONLY")
+    fixed.add_argument("--ids-json", help="JSON list of fixed material IDs")
+    parser.add_argument("--sidecar", help="immutable legacy/v2 input JSON")
+    parser.add_argument("--metadata", help="legacy downloader metadata path")
+    parser.add_argument("--out", required=True, help="new version path; existing output always protected")
+    parser.add_argument("--report", help="new coverage report path for enrich/download")
+    parser.add_argument("--conventions-json", help="explicit structure units/basis declaration; never k-basis proof")
     parser.add_argument("--page-size", type=int, default=500)
     parser.add_argument("--workers", type=int, default=6)
     parser.add_argument("--with-kpoints", action="store_true")
     parser.add_argument("--kpoints-workers", type=int, default=8)
-    args = parser.parse_args()
-
-    t0 = time.time()
-    bulk_rows = fetch_all_bulk_rows(args.page_size, args.workers)
-    print(f"[P1] bulk rows fetched: {len(bulk_rows)} in {time.time() - t0:.1f}s", flush=True)
-
-    records, report = build_records(args.h5, bulk_rows, args.with_kpoints, args.kpoints_workers)
-    print(f"[P1] coverage: {json.dumps(report, ensure_ascii=False)}", flush=True)
-
-    schema = __import__("src.data.structure_sidecar", fromlist=["StructureSidecarSchema"]).StructureSidecarSchema()
-    serialized = [schema.serialize(r) for r in records]
-
-    os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
-    with open(args.out, "w", encoding="utf-8") as fh:
-        json.dump(serialized, fh, ensure_ascii=False)
-    report_path = args.out.replace(".json", "_report.json")
-    with open(report_path, "w", encoding="utf-8") as fh:
-        json.dump(report, fh, ensure_ascii=False, indent=2)
-    print(f"[P1] wrote {len(serialized)} records -> {args.out}", flush=True)
-    print(f"[P1] report -> {report_path}", flush=True)
-
+    args = parser.parse_args(argv)
+    out = Path(args.out)
+    report_path = Path(args.report) if args.report else out.with_name(out.stem + "_report.json")
+    outputs = [out] if args.mode == "audit" else [out, report_path]
+    try:
+        assert_new_outputs(outputs, inputs=(args.sidecar, args.h5, args.ids_json, args.metadata, args.conventions_json))
+        ids = load_fixed_ids(h5_path=args.h5, ids_json=args.ids_json)
+        input_read_error = None
+        if args.mode == "download":
+            if not args.h5 or not args.metadata:
+                parser.error("download requires --h5 and --metadata")
+            rows = fetch_all_bulk_rows(args.page_size, args.workers)
+            records, report = build_records(args.h5, rows, args.with_kpoints, args.kpoints_workers)
+        else:
+            if not args.sidecar:
+                parser.error("audit/enrich requires --sidecar")
+            try:
+                records = load_sidecar_records(args.sidecar)
+            except (OSError, ValueError, UnicodeError) as exc:
+                if args.mode != "audit":
+                    raise
+                records = []
+                input_read_error = str(exc)
+            if args.mode == "enrich":
+                conventions = None
+                if args.conventions_json:
+                    with open(args.conventions_json, encoding="utf-8") as stream:
+                        conventions = json.load(stream)
+                records, report = merge_sidecar_records(records, [], ids, conventions=conventions)
+            else:
+                report = coverage_report(records, set(ids))
+        report["input_read_error"] = input_read_error
+        report["operation"] = args.mode
+        report["inputs"] = {"sidecar": args.sidecar, "h5": args.h5, "ids_json": args.ids_json,
+                            "hdf5_access": "root_keys_only_no_dataset_reads" if args.h5 else "not_opened"}
+        if args.mode == "audit":
+            atomic_write_json(out, report)
+        else:
+            atomic_write_json(out, [StructureSidecarSchema().serialize(r) for r in records])
+            atomic_write_json(report_path, report)
+        print(json.dumps({"out": str(out), "requested": report["requested"],
+                          **{s: report[s] for s in ("valid", "ambiguous", "invalid", "read_error")}}, ensure_ascii=False))
+    except (OSError, ValueError, TypeError) as exc:
+        parser.error(str(exc))
 
 if __name__ == "__main__":
     main()

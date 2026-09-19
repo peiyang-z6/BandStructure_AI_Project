@@ -1,0 +1,36 @@
+name: bandstructure-v2
+x-common: &common
+  image: bandstructure-mcp:2.0.0
+  build: .
+  platform: linux/amd64
+  user: "10001:10001"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 128
+  mem_limit: 3g
+  cpus: 2
+  tmpfs: ["/tmp:size=268435456,mode=1777"]
+  volumes: [band-data:/data]
+services:
+  bandstructure:
+    <<: *common
+    container_name: bandstructure-v2
+    restart: unless-stopped
+    ports: ["127.0.0.1:${BAND_MCP_PORT:-8765}:8000"]
+    environment:
+      BAND_MCP_AUTH_MODE: ${BAND_MCP_AUTH_MODE:-bearer}
+      BAND_MCP_PUBLIC_URL: ${BAND_MCP_PUBLIC_URL:-}
+      BAND_MCP_OAUTH_ISSUER: ${BAND_MCP_OAUTH_ISSUER:-}
+      BAND_MCP_OAUTH_JWKS: ${BAND_MCP_OAUTH_JWKS:-}
+      BAND_MCP_OAUTH_SUBJECT: ${BAND_MCP_OAUTH_SUBJECT:-}
+      BAND_MCP_ALLOWED_HOSTS: "127.0.0.1:${BAND_MCP_PORT:-8765},localhost:${BAND_MCP_PORT:-8765}"
+  setup:
+    <<: *common
+    profiles: [tools]
+    entrypoint: [python, -m, mcp_server.bootstrap]
+    command: []
+    environment:
+      BAND_MCP_PORT: ${BAND_MCP_PORT:-8765}
+volumes:
+  band-data:

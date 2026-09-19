@@ -1,24 +1,24 @@
-"""P1 structure sidecar gap-filler.
+"""P1 v2 create-only, fixed-ID enrichment (offline by default).
 
-The AFLUX bulk query fingerprint (Egap(0*,*5), natoms(1*,*50)) cannot see a
-subset of the 60k band HDF5 (those merged from a different download
-fingerprint). Constitution 5.0 §8 P1 requires full coverage, so this script
-fills the missing material_ids by pulling each one's AFLOW REST endpoints
-directly (per-AURL), reusing the same sidecar mapping, and merges them into
-the sidecar JSON (non-empty precedence, constitution §4).
+  python scripts/fill_sidecar_gaps.py --ids-json ORIGINAL_IDS.json \
+      --sidecar LEGACY.json --incoming-json LOCAL_FIELDS.json --out FILLED.v2.json
 
-Usage:
-    python scripts/fill_sidecar_gaps.py \
-        --h5 data/raw/aflow/snapshots/aflow_60000_20260831/aflow_bands.h5 \
-        --metadata data/raw/aflow/snapshots/aflow_60000_20260831/aflow_metadata.json \
-        --sidecar data/raw/aflow/snapshots/aflow_60000_20260831/aflow_structure_sidecar.json \
-        --workers 8 [--with-kpoints --kpoints-workers 10]
+--h5 may replace --ids-json; only root IDs are read. Incoming rows may be local
+sidecar objects or AFLOW field bundles with exact AUIDs. Out-of-scope IDs are
+reported and clipped; duplicate IDs fail before writes. Nonempty conflicts are
+preserved, not silently overwritten. Unavailable fixed IDs remain read-error
+placeholders. Full field/ID quality coverage is always regenerated into a NEW
+<out_stem>_report.json, never reduced to identity counts or written over legacy.
+
+No network is used unless --download-gaps is explicitly requested with metadata.
+Unknown magnetic, spin/SOC/U and pseudopotential-version values remain unknown.
 """
 from __future__ import annotations
 
 import argparse
 import concurrent.futures
 import json
+import hashlib
 import os
 import random
 import sys
@@ -58,17 +58,26 @@ def _parse_scalar(body: str):
 def fetch_one(material_id: str, aurl: str, with_kpoints: bool, retries: int = 5) -> Dict[str, Any]:
     directory = aurl.split("AFLOWDATA/", 1)[-1].strip()
     base = AFLOWDATA_BASE + directory + "/"
-    fields: Dict[str, Any] = {"auid": "aflow:" + material_id.split("-", 1)[-1], "aurl": aurl}
+    fields: Dict[str, Any] = {"auid": "aflow:" + material_id.split("-", 1)[-1], "aurl": aurl,
+                              "field_read_errors": {}, "field_provenance": {}}
+    names = {"geometry": "lattice", "positions_fractional": "fractional_coordinates",
+             "dft_type": "dft_functional", "species_pp": "pseudopotential",
+             "kpoints_bands_path": "kpath_segments"}
     for ep in ENDPOINTS:
         url = base + "?" + ep
+        field = names.get(ep, ep)
+        fields["field_provenance"][field] = {"url": url, "status": "read_error"}
         last = None
         for attempt in range(retries):
             try:
                 req = urllib.request.Request(url, headers=UA)
                 resp = urllib.request.urlopen(req, timeout=30)
                 with resp:
-                    body = resp.read().decode("utf-8-sig")
+                    data = resp.read()
+                    body = data.decode("utf-8-sig")
                 fields[ep] = _parse_scalar(body)
+                fields["field_provenance"][field].update({"status": "received",
+                    "response_sha256": hashlib.sha256(data).hexdigest()})
                 break
             except Exception as exc:
                 last = exc
@@ -76,6 +85,7 @@ def fetch_one(material_id: str, aurl: str, with_kpoints: bool, retries: int = 5)
                     time.sleep(min(8.0, 0.6 * (2 ** attempt)) + random.uniform(0.0, 0.15))
         else:
             fields[ep] = None
+            fields["field_read_errors"][field] = str(last)
     rec = sidecar_record_from_aflow_fields(fields)
     if with_kpoints:
         from build_structure_sidecar import fetch_kpoints_bits
@@ -86,71 +96,71 @@ def fetch_one(material_id: str, aurl: str, with_kpoints: bool, retries: int = 5)
                 rec["missing_fields"].remove("kpoints_3d")
         else:
             rec["kpoints_3d"] = None
-            if "kpoints_3d" not in rec["missing_fields"]:
-                rec["missing_fields"].append("kpoints_3d")
-    return rec
+            rec.setdefault("field_read_errors", {})["kpoints_3d"] = bits["error"]
+    from src.data.structure_sidecar import enrich_structure_record
+    return enrich_structure_record(rec)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Fill P1 sidecar gaps (missing material_ids)")
-    parser.add_argument("--h5", required=True)
-    parser.add_argument("--metadata", required=True)
+def main(argv=None) -> None:
+    from pathlib import Path
+    from src.data.structure_sidecar import (
+        assert_new_outputs, atomic_write_json, load_fixed_ids, load_sidecar_records,
+        merge_sidecar_records, _index_unique_records, StructureSidecarSchema,
+    )
+    parser = argparse.ArgumentParser(description="Offline P1 v2 fixed-ID enrichment; never rewrite input/coverage")
+    fixed = parser.add_mutually_exclusive_group(required=True)
+    fixed.add_argument("--h5", help="read root keys only")
+    fixed.add_argument("--ids-json", help="JSON list of original fixed IDs")
     parser.add_argument("--sidecar", required=True)
+    parser.add_argument("--incoming-json", help="local list of sidecar records or AFLUX field bundles")
+    parser.add_argument("--out", required=True, help="new version only; no overwrite option")
+    parser.add_argument("--report")
+    parser.add_argument("--conventions-json")
+    parser.add_argument("--download-gaps", action="store_true", help="explicit opt-in to per-AURL network fetch")
+    parser.add_argument("--metadata")
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--with-kpoints", action="store_true")
-    parser.add_argument("--kpoints-workers", type=int, default=10)
-    args = parser.parse_args()
-
-    import h5py
-    with h5py.File(args.h5, "r") as f:
-        h5_ids = set(f.keys())
-    side = json.load(open(args.sidecar, encoding="utf-8"))
-    side_ids = {r["material_id"] for r in side}
-    missing = sorted(h5_ids - side_ids)
-    print(f"[GAP] HDF5 {len(h5_ids)}, sidecar {len(side)}, missing {len(missing)}", flush=True)
-
-    md = json.load(open(args.metadata, encoding="utf-8"))
-    md_by = {r.get("material_id"): r for r in md}
-    targets = [(mid, str(md_by[mid].get("aurl") or "")) for mid in missing
-               if mid in md_by and "AFLOWDATA/" in str(md_by[mid].get("aurl") or "")]
-    print(f"[GAP] fetch targets: {len(targets)}", flush=True)
-
-    new_records: List[Dict[str, Any]] = []
-    done = 0
-    with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
-        futs = {pool.submit(fetch_one, mid, aurl, args.with_kpoints): mid
-                for mid, aurl in targets}
-        for future in concurrent.futures.as_completed(futs):
-            mid = futs[future]
-            try:
-                new_records.append(future.result())
-            except Exception as exc:
-                print(f"[GAP] {mid} failed: {exc}", flush=True)
-            done += 1
-            if done % 200 == 0:
-                print(f"[GAP] {done}/{len(targets)} ...", flush=True)
-
-    # Merge (non-empty precedence): keep existing sidecar records, add new.
-    schema = __import__("src.data.structure_sidecar", fromlist=["StructureSidecarSchema"]).StructureSidecarSchema()
-    merged = side + [schema.serialize(r) for r in new_records]
-
-    # Coverage re-audit
-    merged_ids = {r["material_id"] for r in merged}
-    report = {
-        "sidecar_records": len(merged),
-        "hdf5_groups": len(h5_ids),
-        "h5_ids_missing_in_sidecar": len(h5_ids - merged_ids),
-        "sidecar_ids_not_in_h5": len(merged_ids - h5_ids),
-        "gap_fill_added": len(new_records),
-    }
-    print(f"[GAP] report: {json.dumps(report, ensure_ascii=False)}", flush=True)
-
-    with open(args.sidecar, "w", encoding="utf-8") as fh:
-        json.dump(merged, fh, ensure_ascii=False)
-    rp = args.sidecar.replace(".json", "_report.json")
-    with open(rp, "w", encoding="utf-8") as fh:
-        json.dump(report, fh, ensure_ascii=False, indent=2)
-    print(f"[GAP] wrote {len(merged)} records -> {args.sidecar}", flush=True)
+    args = parser.parse_args(argv)
+    out = Path(args.out)
+    report_path = Path(args.report) if args.report else out.with_name(out.stem + "_report.json")
+    try:
+        assert_new_outputs([out, report_path], inputs=(args.sidecar, args.incoming_json, args.h5,
+                                                     args.ids_json, args.metadata, args.conventions_json))
+        ids = load_fixed_ids(h5_path=args.h5, ids_json=args.ids_json)
+        existing = load_sidecar_records(args.sidecar)
+        incoming = load_sidecar_records(args.incoming_json) if args.incoming_json else []
+        conventions = None
+        if args.conventions_json:
+            with open(args.conventions_json, encoding="utf-8") as stream:
+                conventions = json.load(stream)
+        old_index = _index_unique_records(existing)
+        _index_unique_records(incoming)
+        if args.download_gaps:
+            if not args.metadata or args.workers < 1:
+                parser.error("--download-gaps requires --metadata and positive --workers")
+            metadata = _index_unique_records(load_sidecar_records(args.metadata))
+            targets = [(mid, metadata[mid].get("aurl")) for mid in sorted(set(ids) - old_index.keys())
+                       if mid in metadata and metadata[mid].get("aurl")]
+            with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
+                futures = {pool.submit(fetch_one, mid, aurl, args.with_kpoints): mid for mid, aurl in targets}
+                for future in concurrent.futures.as_completed(futures):
+                    mid = futures[future]
+                    try:
+                        incoming.append(future.result())
+                    except Exception as exc:
+                        incoming.append({"material_id": mid, "read_error": str(exc)})
+        records, report = merge_sidecar_records(existing, incoming, ids, conventions=conventions)
+        report["operation"] = "fill_new_version"
+        report["inputs"] = {"sidecar": args.sidecar, "incoming_json": args.incoming_json,
+                            "h5": args.h5, "ids_json": args.ids_json,
+                            "network_requested": args.download_gaps}
+        atomic_write_json(out, [StructureSidecarSchema().serialize(r) for r in records])
+        atomic_write_json(report_path, report)
+        print(json.dumps({"out": str(out), "requested": report["requested"],
+                          "gap_fill_added": report["gap_fill_added"],
+                          **{s: report[s] for s in ("valid", "ambiguous", "invalid", "read_error")}}))
+    except (ValueError, TypeError, OSError) as exc:
+        parser.error(str(exc))
 
 
 if __name__ == "__main__":

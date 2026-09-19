@@ -40,6 +40,7 @@ ELEMENT_INDEX = {sym: i + 1 for i, sym in enumerate(ELEMENTS)}  # 0 = padding
 # CGCNN defaults
 CUTOFF = 8.0
 MAX_NEIGHBORS = 12
+MAX_ATOMS = 50
 RBF_BINS = 40
 RBF_DMAX = 8.0
 
@@ -69,6 +70,41 @@ def rbf_expand(distances: np.ndarray, bins: int = RBF_BINS, dmax: float = RBF_DM
     return np.exp(-(diff ** 2) / (2.0 * width ** 2)).astype(np.float32)
 
 
+def validate_max_atoms(max_atoms: Optional[int]) -> int:
+    """Reject silent truncation or capacity expansion beyond the P2 contract."""
+    if max_atoms is None:
+        return MAX_ATOMS
+    if (isinstance(max_atoms, (bool, np.bool_))
+            or not isinstance(max_atoms, (int, np.integer))
+            or not 1 <= max_atoms <= MAX_ATOMS):
+        raise ValueError("max_atoms must be an integer in [1, 50]")
+    return int(max_atoms)
+
+
+def validate_geometry(lattice, fractional_coordinates):
+    """Validate before entering pymatgen's native periodic neighbour search."""
+    lat = np.asarray(lattice, dtype=np.float64)
+    frac = np.asarray(fractional_coordinates, dtype=np.float64)
+    if not np.isfinite(lat).all() or not np.isfinite(frac).all():
+        raise ValueError("lattice and fractional coordinates must be finite")
+    if lat.shape != (3, 3) or np.linalg.matrix_rank(lat) != 3:
+        raise ValueError("lattice must be a nonsingular 3x3 matrix")
+    if frac.ndim != 2 or frac.shape[1] != 3 or not len(frac):
+        raise ValueError("fractional coordinates must be a nonempty (n_atoms, 3) array")
+    with np.errstate(over="ignore", invalid="ignore"):
+        cartesian = frac @ lat
+    if not np.isfinite(cartesian).all():
+        raise ValueError("Cartesian coordinates must remain finite")
+    return lat, frac
+
+
+def validate_species(species, n_atoms):
+    """Unknown elements cannot silently become real atoms with padding features."""
+    if (isinstance(species, str) or len(species) != n_atoms
+            or any(not isinstance(s, str) or s not in ELEMENT_INDEX for s in species)):
+        raise ValueError("species must contain one supported element per atom")
+
+
 def build_crystal_graph(
     lattice: Sequence[Sequence[float]],
     species: Sequence[str],
@@ -90,9 +126,13 @@ def build_crystal_graph(
     """
     from pymatgen.core import Lattice, Structure
 
-    struct = Structure(Lattice(np.asarray(lattice, dtype=float)), list(species),
-                       np.asarray(fractional_coordinates, dtype=float))
+    capacity = validate_max_atoms(max_atoms)
+    lat, frac = validate_geometry(lattice, fractional_coordinates)
+    validate_species(species, len(frac))
+    struct = Structure(Lattice(lat), list(species), frac)
     n_atoms = len(struct)
+    if n_atoms > capacity:
+        raise ValueError("atom count exceeds max_atoms capacity (at most 50)")
     all_nbrs = struct.get_all_neighbors(cutoff, include_index=True, numerical_tol=0.01)
 
     n = max_atoms if max_atoms is not None else n_atoms

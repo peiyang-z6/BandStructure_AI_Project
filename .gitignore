@@ -46,3 +46,19 @@ venv/
 *.swo
 .DS_Store
 Thumbs.db
+
+# Private development history, releases, and build products
+PROJECT_BRAIN/agent_logs/
+_local_archives/
+dist/
+build/
+.ruff_cache/
+*.log
+.env.*
+!.env.example
+.bandstructure*/
+client-configs/
+token
+
+# Internal server transfer/acceptance records (private ops)
+PROJECT_BRAIN/transfer_manifests/

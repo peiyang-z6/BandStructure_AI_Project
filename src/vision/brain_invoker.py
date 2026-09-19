@@ -237,6 +237,102 @@ class PhysicsBrainInvoker:
         return raw_predicted_type, override
 
 
+class P2RetrievalInvoker:
+    """Frozen MBM -> local HNSW query, separate from supervised inference.
+
+    No new model and no supervised normalization or heuristic recommendation.
+    numeric_band is band-band retrieval with paired structures, not a verified
+    structure encoder. Manual confirmation is NOT an external human audit.
+    """
+
+    FEATURE_SCHEMA = {
+        'name': 'mbm_flat6d', 'seq_len': 128,
+        'channels': ['VBM_E', 'VBM_curv', 'VBM_k_dist', 'CBM_E', 'CBM_curv', 'CBM_k_dist'],
+        'energy_reference': 'fermi_zero', 'k_axis': 'normalized_0_1',
+        'segment_policy': 'single_segment',
+    }
+
+    def __init__(self, *, store_root, index_name, encoder_path, norm_path):
+        from src.evaluation.retrieval import LocalHNSWStore
+        self.encoder_path, self.norm_path = Path(encoder_path), Path(norm_path)
+        self.encoder_sha256 = self._file_sha(self.encoder_path)
+        self.norm_sha256 = self._file_sha(self.norm_path)
+        self.norm_stats = json.loads(self.norm_path.read_text(encoding='utf-8'))
+        self.gallery = LocalHNSWStore(store_root).load(
+            index_name, encoder_sha256=self.encoder_sha256, norm_sha256=self.norm_sha256,
+            feature_schema=self.FEATURE_SCHEMA)
+        self.encoder = load_ssl_encoder(str(self.encoder_path), compile=False)
+        self.encoder.trainable = False
+        self._norm_snapshot = json.dumps(self.norm_stats, sort_keys=True, allow_nan=False)
+        self._frozen_weights_sha = self._weights_sha()
+        self._assert_frozen()
+
+    def _weights_sha(self):
+        import hashlib
+        digest = hashlib.sha256()
+        for variable in self.encoder.weights:
+            digest.update(variable.numpy().tobytes())
+        return digest.hexdigest()
+
+    def _assert_frozen(self):
+        if (self.encoder.trainable or self._weights_sha() != self._frozen_weights_sha
+                or json.dumps(self.norm_stats, sort_keys=True, allow_nan=False) != self._norm_snapshot
+                or self._file_sha(self.norm_path) != self.norm_sha256
+                or self._file_sha(self.encoder_path) != self.encoder_sha256):
+            raise ValueError('frozen encoder/norm changed; reload an exactly bound artifact')
+
+    @staticmethod
+    def _file_sha(path):
+        import hashlib
+        with Path(path).open('rb') as source:
+            return hashlib.file_digest(source, 'sha256').hexdigest()
+
+    def query_manual(self, source_path, annotations, calibration, *, manual_confirmed=False, k=5,
+                     expected_image_sha256=None):
+        from src.data import band_structure_dataset as mbm
+        from src.vision.physics_reconstructor import PhysicsReconstructor
+        from src.evaluation.retrieval import decode_raster_bytes, validate_manual_calibration, validate_manual_extrema
+        if manual_confirmed is not True:
+            raise ValueError('manual calibration confirmation required for this image')
+        if not Path(source_path).is_file():
+            raise FileNotFoundError('missing source image: ' + str(source_path))
+        import hashlib
+        image_bytes = Path(source_path).read_bytes()
+        image_sha = hashlib.sha256(image_bytes).hexdigest()
+        if expected_image_sha256 is not None and expected_image_sha256 != image_sha:
+            raise ValueError('source image changed; reload and manually recalibrate')
+        with decode_raster_bytes(image_bytes) as image:
+            image_size = image.size
+        validate_manual_calibration(annotations, calibration, image_size=image_size)
+        self._assert_frozen()
+        ann = annotations
+        panel = ann['panel']
+        tensor = PhysicsReconstructor().reconstruct_from_manual(
+            source_path=str(source_path),
+            panel_bbox=[panel[0], panel[1], panel[0] + panel[2], panel[1] + panel[3]],
+            y_calibration=[{'y': p[1], 'value': v} for p, v in zip(ann['yaxis_pts'], calibration['y_values'])],
+            x_calibration=[{'x': p[0], 'value': v} for p, v in zip(ann['xaxis_pts'], calibration['x_values'])],
+            vbm_pixel=dict(zip(('x', 'y'), ann['vbm'])), cbm_pixel=dict(zip(('x', 'y'), ann['cbm'])),
+            valence_points=[dict(zip(('x', 'y'), p)) for s in ann['vb_strokes'] for p in s],
+            conduction_points=[dict(zip(('x', 'y'), p)) for s in ann['cb_strokes'] for p in s],
+            fermi_y_pixel=ann['fermi_y'])
+        validate_manual_extrema(annotations, calibration, reconstructed=tensor.flat_tensor)
+        normalized = mbm.normalize_mbm_inputs(tensor.flat_tensor, self.norm_stats)
+        embedding = self.encoder(normalized, training=False, return_features=True).numpy()
+        self._assert_frozen()
+        result = self.gallery.search(embedding, k=k)
+        result['query_provenance'] = {
+            'input_space': 'raw6d', 'normalization_count': 1,
+            'encoder_sha256': self.encoder_sha256, 'norm_sha256': self.norm_sha256,
+            'schema_sha256': self.gallery.manifest['schema_sha256'],
+            'image_sha256': image_sha,
+            'annotation_sha256': hashlib.sha256(json.dumps(
+                {'annotations': annotations, 'calibration': calibration},
+                sort_keys=True, separators=(',', ':'), ensure_ascii=True, allow_nan=False).encode()).hexdigest(),
+        }
+        return result
+
+
 class ApplicationRecommender:
     """Rule-based device mapping grounded in the model brain outputs.
 

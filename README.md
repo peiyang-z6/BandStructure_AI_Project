@@ -1,259 +1,112 @@
-# BandStructure AI Project
+# BandStructure MCP · 第二版（v2.0.0）
 
-面向晶体能带结构的物理约束深度学习项目。项目大方向保持不变：
+[English](README.en.md) · [部署与客户端](docs/DEPLOYMENT.md) · [训练方法](docs/TRAINING.md) · [验证范围](docs/V2_VERIFICATION.md) · [MIT](LICENSE)
 
-```text
-完整 line-mode E(k)
-  → (N, 2, 128, 3) 6D 物理张量
-  → Masked Band Modeling 自监督预训练
-  → 带隙回归 + 三任务分类（line_mode_topology / provider_global_electronic_type / line_global_disagreement）
-  → tkinter Plot-to-Physics 工作台
-```
+让 AI 阅读能带论文，让可检查的工具处理数值、来源和导出。推荐通过 Docker 在 **Windows / Linux（x86-64）** 运行，提供 stdio 和带认证的 Streamable HTTP 接口。当前服务无需显卡、CUDA、Materials Project 密钥或历史模型权重。
 
-**差异化核心方向（2026-09-06）**：建立"晶体结构 — 数值能带 — 论文/实验能带图像"的物理约束跨模态模型，用于检索、匹配、可信拒识与主动 DFT 闭环；structure→multi-band Eₙ(k) 预测是其中一个任务，而非全部卖点。开发顺序 P1→P5：结构 sidecar 补全（P1）、跨模态检索（P2）、variable multi-band decoder（P3）、校准不确定性 + 主动获取（P4）、外部验证集（P5）。详见宪法 §8 与 `PROJECT_BRAIN/agent_logs/20260906_direction_reframing_audit.md`。
-
-## 当前状态
-
-**latest accepted：`aflow_noleak_v7_60k_seed42`**（2026-09-03 v7 60k 最终验收）。AFLOW 数据 **60,000 条**（55,476 主通道 + 4,524 代理通道唯一，seed 42 抽样合并；张量 59,899 样本，101 条无边缘包络跳过）。服务器 Tesla V100 GPU-only：SSL 50 epochs（early stopping）+ 监督 51 epochs（best epoch 31 by aggregate `val_loss`）+ 冻结后 evaluation-only。两次 GPU OOM 已 TDD 修复（commit `4367f87`、`ed783a8`，分块前向），全量回归 164 passed；产物回传 SHA-256 校验通过。
-
-| 项目 | v7 正式值（11,987 outer） |
-|---|---:|
-| learned line-mode MAE / RMSE | **1.54e-05 / 5.54e-04 eV** |
-| model vs global DFT MAE | **0.3767 eV** |
-| type accuracy / Macro F1 | **0.9251 / 0.8788** |
-| spacegroup-macro accuracy | **0.9296** |
-| mismatch accuracy（1,723） | **0.7441** |
-| MC raw 95% coverage | **0.7974** |
+> **科研辅助软件，不是 DFT 计算引擎或已通过独立科学验收的预测模型。** 未知置信度保持 null；不能仅凭能带图唯一确认元素、晶体或合成路线，不能把 AI 标注称为真人审核。
 
-**P0 科研基准重构（已完成，2026-09-06）**：line-mode gap MAE 退出主结果位；标签拆为三任务 —— `line_mode_topology`（线模式路径可观察）、`provider_global_electronic_type`（uniform/DOS/数据库来源）、`line_global_disagreement`（预测二者冲突的二分类）。3 seeds {42, 2024, 7} 全链训练 + 冻结模型七类拆分评估（random / space-group / composition / prototype / leave-element / source-protocol / temporal）+ spacegroup group-bootstrap 95% CI + 错误分层四轴。完整报告见 `artifacts/reports/aflow_noleak_v7_60k_seed42/P0_scientific_reframing_report.md`。
+## 1. 项目介绍与应用领域
 
-**三任务主结果（outer OOD 11,987，3 seeds 均值±std）**：line_mode_topology `0.9932±0.0016`、provider_global_electronic_type `0.9371±0.0062`、line_global_disagreement `0.9666±0.0016`。
+本项目向支持模型上下文协议（MCP）的 AI 工具提供17个工具、5项资源和2个提示模板：
 
-### P3 探索性进展与纠错（2026-09-08，未验收）
+- 组织论文阅读步骤，区分电子能带、声子、态密度、缺陷能级与输运图。
+- 检查 AI 提交的单位、坐标、能量参考、路径断点、原文件摘要和证据字段。
+- 提取图中可见内容，分析用户提供的数值能带；分别处理路径采样和均匀网格。
+- 导入受支持的 VASP XML、POSCAR、图片和PDF，输出可追溯的JSON、CSV、SVG及分页结果。
+- 协助整理组成、晶体结构、材料性质和合成文献，不认证引文真实性或实验可行性。
 
-P1 已完成，P2 检索仍未验收。用户授权先行推进 P3；该限域例外已记录到宪法 5.1，不代表跨过科学验收。
+适用于半导体、热电、光伏、电池、超导材料的文献入门、教学演示和数据整理。工程设计、实验合成及论文准确率结论仍需独立证据。
 
-排序 OT 的旧 60-epoch run 已完成，但本轮复核发现选带会漏掉费米跨越 band、padding 会改写 VBM、插值可能跨不连续分支、Keras 重载预测不一致等问题。旧模型/报告/对应代码已归档并验证双端 SHA；旧 gap 数值不作为有效精度结论。
+## 2. 工作原理与模型调用
 
-已原地增加可选 k 点自注意力，保持 MLP 对照；实现 inner-only 选模、best/last/accepted 冻结和 evaluation-only。EF 接触、loss 溢出、prepare 完成／冒烟凭据、outer ID/group 互斥和样本轴门禁均已通过独立复审。**本地与服务器完整回归均为 456 passed**；本地 GPU 及服务器双 V100 的真实晶体端到端冒烟均通过，重载预测差为 0。
+![项目结构框图](docs/figures/mcp_architecture.png)
 
-受控流程已完成并于 **2026-09-09（UTC）完成结果复核**：新版train 47,879条，outer有效11,936条；MLP stop72/best52、两层自注意力stop65/best45。相同数据/inner split、seed42、batch32及训练规则，双方冻结后才做outer评估；不代表等参数量或等实际算力。
+[可编辑SVG](docs/figures/mcp_architecture.svg)
 
-| P3 outer指标 | MLP | 两层自注意力 |
-|---|---:|---:|
-| 逐k谱OT MAE（eV） | 4.083630 | 3.951537 |
-| 共同可解析11,893条的gap MAE（eV） | 0.794580 | 0.899375 |
-| 可解析目标零隙上的假gap率 | 31.0217% | 41.4431% |
-| gap可解析覆盖率 | 99.9078% | 99.7319% |
+1. 操作者选择文件，本地适配器生成附件编号和SHA-256摘要，模型不需要编造文件字节。
+2. 宿主AI利用自身视觉/OCR和语言能力读原图、查文献、选择区域并提出结构化观察。
+3. 客户端按 initialize → tools/list → tools/call 调用MCP，可经Docker内stdio或 /mcp HTTP端点。
+4. MCP检查来源和数值合约，计算已给出的样本，返回结果或缺失证据。
+5. 宿主解释结果；独立专家负责最终科学验收。未知分支、缺失样本和路径断点不会被伪造补全。
 
-谱误差点估计下降3.23%，但55空间群/2,000次配对bootstrap的差值95%区间跨零；gap与金属诊断退化，**不能称自注意力全面更好或P3验收通过**。45文件（3,319,777,019 bytes）已回传逐文件SHA核验；全量预测重算一致；原V100重放与本机独立重载差均0。本机GPU关键算子、last/optimizer恢复通过，但跨V100/RTX严格逐点等价（rtol=atol=1e−5）未通过，失败保留、未放宽门限。
+**模型由宿主调用，不由MCP再调用一次。当前MCP不加载历史神经网络、ANN索引或DFT求解器。** 本地OCR/PDF解析只是后备。协议背景见[MCP官方架构](https://modelcontextprotocol.io/specification/2025-11-25/architecture)。
 
-保留模型/优化器/epoch恢复状态，但尚无CLI resume。逐k谱OT不等于轨迹匹配，scalar k不支持物理有效质量结论；Bandformer同数据对照、P3七拆分/多seed及完整物理指标仍缺。最新记录：[最终结果与限制](PROJECT_BRAIN/agent_logs/20260909_P3_controlled_final_results.md)。
+| 比较项 | 不接入本项目MCP | 接入本项目MCP |
+| --- | --- | --- |
+| 看图与解释 | 宿主原有能力 | 仍由宿主提供 |
+| 数值计算 | 取决于宿主代码和工具 | 统一、可测试的路径/网格合约 |
+| 来源和坐标 | 宿主自行组织 | 摘要绑定、区域和轴检查 |
+| 缺失项与导出 | 取决于工作流 | 明确拒绝/补证、保留断点和追溯 |
+| 准确率、速度增益 | 未完成匹配对照 | **不报告未经实测的提升比例** |
 
-记录：[纠错与审查](PROJECT_BRAIN/agent_logs/20260908_P3_reaudit_attention_execution.md) · [服务器验证与受控流程](PROJECT_BRAIN/agent_logs/20260908_P3_remote_controlled_execution.md)。旧无完成凭据的 P3 NPZ 必须重新 prepare 到新目录，冒烟输入不得作为正式数据。初次服务器环境失败已保留，最终通过没有跳过测试或伪造历史资产。
+AI-only也能编程或使用其他工具；这是功能比较，不是优越性实验。
 
-## 历史里程碑（摘要）
+## 3. 历史训练方法与效果
 
-| 日期 | 里程碑 | 要点 |
-|---|---|---|
-| 2026-09-06 | **P0 科研基准重构** | 三任务标签/三 head、3 seeds、七拆分、group bootstrap、错误分层 |
-| 2026-09-03 | **v7 60k 验收** | 60k 数据、v7 训练验收为 latest accepted（详见上表） |
-| 2026-08-31 | Phase 6 加固 | 环境固化（requirements `==` 锁定）；GUI 状态持久化（JSON 缓存，宪法 §9 无 Gradio）；CV 置信度+质量灯；文献挖掘 pipeline（P3 → `data/raw/experimental/experimental_bands.h5`） |
-| 2026-08-28 | v6 metric-fix 验收 | 修复 checkpoint-selection（aggregate inner `val_loss`、best/last/accepted 冻结）；完整回归 92→164 passed |
-| 2026-08-27 | v5 审计判定 | v5 字节完整但 checkpoint-selection 无效，降为 immutable historical run |
-| 2026-08-26 | 下载可靠性治理 | canonical HDF5 hash+lock、cursor v2、write-ahead 对账；只治理未来任务，不改 v4/v5 |
-| 2026-08-24 | v4 首个 no-leak 基线 | 6,443 条，outer 1,288，type acc 0.8657 |
+当前MCP **无需训练**。历史离线预研以AFLOW数值能带为输入，先遮蔽部分点进行恢复训练，再微调分类和带边任务；不是用1000张论文图片训练当前服务。
 
-各里程碑完整报告：v7 见 `artifacts/reports/aflow_noleak_v7_60k_seed42/v7_final_training_report.md`；v6 见 `artifacts/reports/aflow_noleak_v6_30k_seed42_metricfix/v6_final_training_report.md`；v5 审计见 `PROJECT_BRAIN/agent_logs/20260827_training_result_reaudit_and_retrain_plan.md`；v4 见 `artifacts/reports/aflow_noleak_v4_seed42/latest_training_report_20260824.md`。
+- 平台记录：2×NVIDIA Tesla V100-SXM2，每卡16GB；不代表每次实验均双卡并行。
+- 归档环境：Python 3.11、TensorFlow 2.21、CUDA 12.5.82、cuDNN 9.3.0.75，独立于CPU版MCP容器。
+- 数据：60,000条AFLOW记录，59,899条构成128点×6通道输入，101条因缺少带边跳过。
+- 空间群分组：47,912条训练、11,987条外部测试，不共享空间群；内部验证用于选模。
+- 图中采用摘要核验一致的恢复归档：seed 42、54轮、最优第34轮。归档混淆矩阵复算准确率94.20%、宏平均F1 90.56%。
 
-## 新项目根目录
+![历史训练量化评估](docs/figures/historical_training_evaluation.png)
 
-运行项目已迁移至：
+**这些数字不是MCP、图片识别或AI对照实验准确率。** 另一份51轮日志未混入；带隙任务存在直接解析基线，小回归误差不等于独立物理预测能力。
 
-`C:\Users\PeiYang\Documents\AI Project\BandStructure AI Project\BandStructure_AI_Project`
+[训练程序、方法、数据来源与复现限制](docs/TRAINING.md) · [图表数值与摘要](docs/figures/paper_metrics.json)。
 
-论文、Word、图片、表格等资料保留在外层兄弟目录：
+## 4. 实战效果
 
-`C:\Users\PeiYang\Documents\AI Project\BandStructure AI Project\资料`
+0.7.1阶段记录了六篇论文69页、正文链路76次真实工具调用，恢复7个电子面板可见内容，并从作者数值数据绘出43条与65条已提供能带。第二版部署测试单独见[验证记录](docs/V2_VERIFICATION.md)，不把旧结果当作新测试。
 
-`资料/` 不得放进运行根目录。
+| 论文/体系 | 处理范围 |
+| --- | --- |
+| [PRX Energy：BaB₂、ZrRuSb、TaRu₃C](https://doi.org/10.1103/sb28-fjc9) | 电子与声子分开；作者数据扩展不冒充隐藏能带推断 |
+| [ACS Energy Letters：NMC正极](https://doi.org/10.1021/acsenergylett.1c02028) | 所测声子图不用于电子带隙 |
+| [JMCA：Na₃OCl](https://doi.org/10.1039/D1TA07588H) | 离子输运不是E(k)，还需采用[勘误](https://doi.org/10.1039/D2TA90105F) |
+| [ACS AMI：ZnGa₂O₄](https://doi.org/10.1021/acsami.5c19146) | 可见面板恢复；原文静态间接隙5.08eV，不恢复图外导带 |
+| [EES：kesterite光伏](https://doi.org/10.1039/D0EE00291G) | 缺陷跃迁能级与构型坐标不伪装成电子能带 |
+| [JMCA：Bi₂MO₄Cl](https://doi.org/10.1039/D5TA05523G) | 路径与作者网格分开，合成追溯原始实验来源 |
 
-## 目录结构
+这些案例已被查看，**不是盲测集**。论文、下载图像、权重和本地1000条数据不随仓库发布，版权另属权利人。
 
-```text
-BandStructure_AI_Project/
-├── data/
-│   ├── raw/
-│   │   ├── aflow/
-│   │   │   ├── aflow_bands.h5              # byte-identical v4 6,443 baseline
-│   │   │   ├── json_cache/aflow/            # v4 6,443 原始响应
-│   │   │   ├── snapshots/
-│   │   │   │   └── aflow_30000_20260825/   # immutable v5 30k raw+JSON+hash manifest
-│   │   │   ├── supplemental/                # 20 条早期唯一记录，隔离于正式快照
-│   │   │   └── provenance/                  # baseline 恢复、变体与下载审计
-│   │   └── materials_project/
-│   │       ├── mp_bands.h5                  # 12 条已下载 smoke 记录合并集
-│   │       └── provenance/
-│   └── processed/
-│       └── aflow/
-│           ├── ood_tensors/                 # 历史正式 noleak_v4 张量
-│           └── ood_tensors_v5_30000_seed42/ # v5 29,952 no-leak 张量
-├── artifacts/
-│   ├── {models,checkpoints,reports,logs}/aflow_noleak_v6_30k_seed42_metricfix/ # 新版本正式输出（训练前为空）
-│   ├── {models,checkpoints,reports,logs}/aflow_noleak_v5_30k_seed42/           # immutable historical v5
-│   └── {models,checkpoints,reports,logs}/aflow_noleak_v4_seed42/               # retained baseline
-├── configs/
-├── scripts/
-├── src/
-│   ├── data/
-│   ├── engine/
-│   ├── models/
-│   ├── utils/
-│   └── vision/
-├── tests/
-├── PROJECT_BRAIN/
-├── README.md
-└── requirements*.txt
-```
-
-`src` 现有模块职责不变；没有增加平行数据层、平行训练器或第二套模型框架。`scripts/` 保持稳定的扁平入口，职责分类见 `scripts/README.md`。
+## 5. 部署、依赖与客户端
 
-## 项目结构图与运行流程图
+先安装Git和运行Linux containers的Docker Engine/Desktop、Compose v2；Windows使用WSL2后端。建议至少4GB可用内存、3GB磁盘空间，首次构建需联网。Docker Desktop有独立许可，也可使用Linux/WSL中的开源Docker Engine。
 
-- 当前项目结构图：`PROJECT_BRAIN/diagrams/project_structure_diagram_20260827.html`
-- 当前端到端流程图：`PROJECT_BRAIN/diagrams/runtime_flow_diagram_20260827.html`
-- 2026-08-24 v4 图保留为 historical snapshot；图示说明：`PROJECT_BRAIN/diagrams/README.md`
+    git clone https://github.com/peiyang-z6/BandStructure_AI_Project.git
+    cd BandStructure_AI_Project
+    docker compose run --build --rm setup
+    docker compose up -d --wait --wait-timeout 120
+    docker compose cp bandstructure:/data/client-configs ./.bandstructure-clients
 
-两张图均为静态、可缩放、离线可打开的 HTML/SVG。
+Windows可运行 ./scripts/start.ps1，Linux可运行 sh scripts/start.sh。生成的配置含访问凭据，**禁止提交或分享**。默认端点 http://127.0.0.1:8765/mcp 仅映射回环地址，必须认证。
 
-## 数据与张量合同
-
-原始记录至少包含：
+| 客户端 | 接入方式 |
+| --- | --- |
+| Hermes | 合并hermes.config.json中的mcp_servers对象，HTTP＋认证头 |
+| Claude Code | 合并claude-code.mcp.json，HTTP |
+| Claude Desktop | 合并claude-desktop.json，docker exec -i stdio |
+| VS Code | 合并vscode.mcp.json到用户MCP配置或.vscode/mcp.json |
+| ChatGPT | 有权限的Secure MCP Tunnel，或自管HTTPS＋OAuth；**localhost不是云端地址，静态Bearer不是ChatGPT UI OAuth** |
 
-- `energies`: `(bands,k)` 或 `(spin,bands,k)`，单位 eV；
-- 真实累计 `k_distances` 与 segment/symmetry 信息；
-- `spacegroup_number`、source、material ID、URL 与校验信息；
-- provider gap/type 标签仅用于 target/audit。
+附件由操作者导入，不给模型任意文件路径权限：
 
-固定张量：
+    docker compose exec bandstructure mkdir -p /data/inbox
+    docker compose cp ./paper.pdf bandstructure:/data/inbox/paper.pdf
+    docker compose exec bandstructure bandstructure-attach /data/inbox/paper.pdf
 
-```text
-X: (N, 2, 128, 3)
-band:    [occupied edge envelope, empty edge envelope]
-channel: [energy, curvature, normalized distance to extremum]
+将输出的att_...编号交给AI；大PDF可用--page 5导入指定页。每个实例是**单一所有者**的数据空间，同实例客户端共享附件；不同用户使用不同实例、数据卷和凭据。
 
-flatten → (N, 128, 6)
-[VBM_E, VBM_curv, VBM_k_dist, CBM_E, CBM_curv, CBM_k_dist]
-```
+[完整部署、OAuth、备份、故障排查及官方资料](docs/DEPLOYMENT.md)。本仓库不会自动创建域名、OAuth账号、云服务或收费资源。
 
-强制合同：
-
-- AFLOW `bands_data` 使用 canonical `E_F=0`；原始绝对 `Efermi` 仅作 provenance；
-- edge envelopes 只由 E(k)+E_F 构造；provider 标签不得改变输入、锚定、mask 或插值；
-- 使用 PCHIP shape-preserving interpolation；
-- curvature、crossing、span masking 和物理损失均不得跨 k-path segment；
-- outer split 为 spacegroup 80/20、seed=42、零交集；outer test 不参与模型选择；
-- composition overlap、prototype overlap、label/feature mismatch 与 SHA-256 必须进入 manifest。
+原创代码为[MIT](LICENSE)，依赖保留自己的许可；含PDF栈的Docker镜像还须遵守[第三方说明](THIRD_PARTY_NOTICES.md)，不能把所有依赖称为MIT。欢迎任何人Fork、Issue和PR，主分支不开放匿名直接写入。[贡献指南](CONTRIBUTING.md)。
 
-最新 v5 raw HDF5 SHA-256：
+## 6. 开发者说明
 
-`d9927f0425de6232a24b8cea2eb8d0c5820e0aa9e29222b7feb621ebc7be08f3`
+我是机械专业的个人开发者，并非计算材料科学科班出身。本项目在AI agent辅助下，参考开源协议、库和公开研究逐步完成，希望成为能带文献阅读和DFT入门的辅助工具。实现仍可能有错，恳请感兴趣的研究者和开发者批评指正。
 
-最新 v5 split NPZ SHA-256：
-
-`c99d21647489bec3c4a20cafd209ef136b83da966af67e0594f4dc5d0aa5b7a5`
-
-保留的 v4 raw/split SHA-256：`bb261f1e…b62d` / `c6652b85…ae59`。
-
-## WSL2 + Conda 快速开始
-
-```bash
-conda activate bandstructure-ai
-cd /mnt/c/Users/PeiYang/Documents/'AI Project'/'BandStructure AI Project'/BandStructure_AI_Project
-
-# 完整回归测试
-python -m pytest -q
-
-# 最新模型真实加载与推理 smoke
-CUDA_VISIBLE_DEVICES='' python tests/smoke_latest_model.py
-```
-
-`scripts/run_full_pipeline.py --source aflow` 保留为 v4 复现实验入口，不是 v6 正式命令。v4/v5 都是 immutable snapshot；继续训练必须显式给出新的 experiment ID 与只读输入。
-
-### v6 GPU-only 正式命令
-
-```bash
-CUDA_VISIBLE_DEVICES=0 python scripts/run_full_pipeline.py \
-  --source aflow \
-  --experiment-id aflow_noleak_v6_30k_seed42_metricfix \
-  --raw-h5 data/raw/aflow/snapshots/aflow_30000_20260825/aflow_bands.h5 \
-  --ood-dir data/processed/aflow/ood_tensors_v5_30000_seed42 \
-  --target 30000 \
-  --report-date 20260827 \
-  --ssl-epochs 60 --ssl-batch-size 32 \
-  --mask-ratio 0.25 --sign-weight 2.0 --consistency-weight 0.0 \
-  --finetune-epochs 60 --finetune-batch-size 32 \
-  --learning-rate 0.001 --encoder-learning-rate 0.00001 \
-  --type-weight 2.0 --freeze-layers 2 \
-  --topology-weight 0.3 --entropy-weight 0.02 --extremum-weight 1.0 \
-  --fresh --force-ssl --force-finetune --skip-vision --require-gpu
-```
-
-该命令不得在 CPU 或未通过 Conv1D GPU forward/backward preflight 的环境运行。
-
-### 重现 v4 基线张量（仅复现，不改 v5）
-
-```bash
-python scripts/build_ood_tensors.py \
-  --h5 data/raw/aflow/aflow_bands.h5 \
-  --metadata data/raw/aflow/aflow_metadata.json \
-  --output data/processed/aflow/ood_tensors
-```
-
-### 启动 tkinter 工作台
-
-```bash
-python scripts/gui_workbench.py
-```
-
-当前物理模型链路已验收；最新 vision detector 权重在清理前目录中不存在，因此自动图像检测属于可选未验收能力，人工标定与物理模型调用仍保留。
-
-## 环境
-
-- WSL2 / Ubuntu 24.04
-- Conda env：`bandstructure-ai`
-- Python 3.11
-- TensorFlow 2.21
-- 本地 RTX 4060；服务器 2×V100 16GB
-- `requirements-gpu.txt`：核心 GPU 链路
-- `requirements-vision.txt`：可选 YOLO/Ultralytics
-
-Materials Project 密钥只允许放在未跟踪文件 `configs/api_keys.env`。模板为 `configs/api_keys.env.example`。不得输出、写入报告或提交真实密钥。
-
-## 当前科学边界
-
-1. 当前正式方向仍以已计算 E(k) 为输入，是能带分析/表征模型；结构→多能带预测是 P3 阶段目标，尚未实现。
-2. line-mode gap target 是输入函数；解析 baseline MAE/RMSE 为 0，learned gap head 的误差只衡量 soft-extremum approximation。**P0 起 line-mode gap MAE 不再是主结果**；主结果是三任务（line_mode_topology / provider_global_electronic_type / line_global_disagreement）。
-3. v5 checkpoint selection 因 last-batch metric 无效（immutable historical）；v6/v7 均以 aggregate inner `val_loss` 为 canonical selection。
-4. P0 已落地 3 seeds {42, 2024, 7} 与 spacegroup group-bootstrap 95% CI（`src/evaluation/bootstrap_stratify.py`）。
-5. P0 已固定七类拆分（random / space-group / composition / prototype / leave-element / source-protocol / temporal，见 `src/data/benchmark_splits.py`），冻结模型跨拆分评估。
-6. provider/line-mode 冲突以三任务中的 `line_global_disagreement` 显式建模（冲突率 12.4%）。
-7. MC-dropout raw 95% coverage 0.7974 尚不足以驱动主动学习（P4 才升级为校准不确定性）；当前不得把 MC 方差当 DFT 选择依据。
-8. HDF5 尚无 lattice/species/fractional_coordinates——结构字段缺失是 P1 的数据合同问题（审计见 `20260906_direction_reframing_audit.md`）。
-
-## 不可破坏约束
-
-- 不改变 E(k)→6D→MBM→监督 heads→tkinter 主链；
-- 不删除 `PROJECT_BRAIN/`、`configs/api_keys.env`、`data/raw/`、`data/processed/` 或当前正式 `artifacts/`；
-- 不把 `资料/` 移入运行根目录；
-- 不提交/输出真实 API key；
-- outer test 不参与 early stopping、checkpoint、阈值或超参数选择；
-- 结构性修改必须同步 README、dev_context、CONSTITUTION 和日期日志；
-- 不修改既有 immutable HDF5（结构字段走只读 sidecar）；
-- 不单纯扩数据到 100k，不从零实现 DeepH 类哈密顿量网络。
-
-## 下一阶段
-
-按宪法 §8 的 P1→P5 顺序推进。当前 P0 已完成（三任务基准 + 3 seeds + 七拆分 + group bootstrap + 错误分层）。下一步是 **P1：为 60k 数据补全结构 sidecar**（lattice/species/fractional_coordinates 等，AFLOW REST 端点实测可达）。完整方向评估见：
-
-`PROJECT_BRAIN/agent_logs/20260906_direction_reframing_audit.md`
+项目公开原创源码，核心运行依赖开源组件；但开发过程使用过AI工具和文档软件，宿主也可能是闭源服务，因此不作“全过程未使用任何闭源软件”的不实承诺。AI辅助开发不替代专业验证，我愿意根据可复现证据持续改进。

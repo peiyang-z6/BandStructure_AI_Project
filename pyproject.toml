@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bandstructure-mcp"
+dynamic = ["version"]
+description = "Evidence-aware local MCP assistance for electronic band figures and scientific data"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+dependencies = ["mcp>=1.30,<2", "numpy>=1.26,<3", "scipy>=1.12,<2", "Pillow>=10.1,<13", "jsonschema>=4.23,<5", "PyJWT[crypto]>=2.10,<3", "uvicorn>=0.30,<1"]
+
+[project.optional-dependencies]
+documents = ["PyMuPDF>=1.26,<2", "opencv-python>=4.10,<6"]
+ocr = ["rapidocr-onnxruntime==1.4.4", "onnxruntime>=1.20,<2"]
+test = ["pytest>=8,<10"]
+
+[project.scripts]
+bandstructure-mcp = "mcp_server.cli:serve"
+bandstructure-attach = "mcp_server.cli:attach_main"
+bandstructure-admin = "mcp_server.cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "mcp_server.version.__version__"}
+
+[tool.setuptools]
+packages = ["mcp_server", "src", "src.utils", "src.vision"]
+include-package-data = false
+
+[tool.setuptools.package-data]
+mcp_server = ["config.json", "requirements.txt", "resources/*.json", "resources/*.txt", "examples/*.json", "examples/*.png", "examples/*.md"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["F"]
+ignore = ["F401"]

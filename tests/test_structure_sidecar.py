@@ -67,11 +67,11 @@ def test_build_lattice_from_geometry_accepts_aflow_list():
 def test_compute_structure_sha256_deterministic():
     spec = {"lattice": [[4, 0, 0], [0, 4, 0], [0, 0, 4]], "species": ["O", "Zr"],
             "fractional_coordinates": [[0, 0, 0], [0.5, 0.5, 0.5]]}
-    h1 = compute_structure_sha256(spec)
-    h2 = compute_structure_sha256(spec)
+    h1 = compute_structure_sha256(spec, version="legacy-v1")
+    h2 = compute_structure_sha256(spec, version="legacy-v1")
     assert h1 == h2
     assert len(h1) == 64
-    assert h1 != compute_structure_sha256({**spec, "fractional_coordinates": [[0, 0, 0], [0.5, 0.5, 0.4]]})
+    assert h1 != compute_structure_sha256({**spec, "fractional_coordinates": [[0, 0, 0], [0.5, 0.5, 0.4]]}, version="legacy-v1")
 
 
 def test_sidecar_record_from_aflow_fields_full():
@@ -100,7 +100,7 @@ def test_sidecar_record_from_aflow_fields_full():
 
 
 def test_sidecar_record_missing_optional_fields_marked():
-    rec = sidecar_record_from_aflow_fields({"auid": "aflow:x", "geometry": "[4,4,4,90,90,90]"})
+    rec = sidecar_record_from_aflow_fields({"auid": "aflow:0000000000000001", "geometry": "[4,4,4,90,90,90]"})
     assert rec["dft_functional"] is None
     assert rec["spin_cell"] is None
     assert rec["missing_fields"]  # fallback/missing must be marked
@@ -109,12 +109,12 @@ def test_sidecar_record_missing_optional_fields_marked():
 
 def test_schema_roundtrip_and_coverage():
     rec = sidecar_record_from_aflow_fields({
-        "auid": "aflow:abc", "geometry": "[4,4,4,90,90,90]",
+        "auid": "aflow:0000000000000abc", "geometry": "[4,4,4,90,90,90]",
         "species": ["Si"], "positions_fractional": [[0, 0, 0]],
     })
     schema = StructureSidecarSchema()
     payload = schema.serialize(rec)
     parsed = schema.deserialize(payload)
-    assert parsed["material_id"] == "aflow-abc"
+    assert parsed["material_id"] == "aflow-0000000000000abc"
     assert parsed["lattice"].shape == (3, 3)
     assert parsed["species"] == ["Si"]

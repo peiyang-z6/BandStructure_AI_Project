@@ -1,0 +1,105 @@
+{
+  "scope": "source_inspection_only_not_exact_historical_run_reproduction",
+  "files": [
+    {
+      "path": "scripts/finetune_supervised.py",
+      "sha256": "9fb66b8e248bae815a30e47b433bd363ec40afabda1594596e744d2eddec4e05",
+      "bytes": 133836
+    },
+    {
+      "path": "scripts/train_ssl.py",
+      "sha256": "9331b49a1eee03330662449a6c736bc3d815ae377dcee14a8bd7985e9cefa2ce",
+      "bytes": 20960
+    },
+    {
+      "path": "src/data/__init__.py",
+      "sha256": "0b02dd6f5e20e0ddc814419f0bb75542f31420b618caa848383b370e54dbfc9a",
+      "bytes": 622
+    },
+    {
+      "path": "src/data/aflow_adapter.py",
+      "sha256": "ea6f6f8a73d0ad92f7ff5f77116c0b503cb8771fc330288e8226ed460b173488",
+      "bytes": 35710
+    },
+    {
+      "path": "src/data/band_store.py",
+      "sha256": "169638bb84517341afe9d88903857ab95827b420586aca214dc3c64e424529c2",
+      "bytes": 22026
+    },
+    {
+      "path": "src/data/band_structure_dataset.py",
+      "sha256": "1d39366128e1e5b721ce30bcc8a9b33ccd36f09654eed3efe4c26daac5da7fb2",
+      "bytes": 3745
+    },
+    {
+      "path": "src/data/benchmark_splits.py",
+      "sha256": "a92415558ea2e61bbb49cc7ab7426c0b577fa6df4c88dde0d751bc6c67c04328",
+      "bytes": 15513
+    },
+    {
+      "path": "src/data/ood_tensor_builder.py",
+      "sha256": "cc9d237ee4bd57ff50b65cd1ab5a4991e1f999add806ed32927f3ba22b4cbeaa",
+      "bytes": 48536
+    },
+    {
+      "path": "src/engine/__init__.py",
+      "sha256": "8af8d96e5a3553b0be10f288dfef0db12b6f07950a94bd05cbcf7fe20425214d",
+      "bytes": 65
+    },
+    {
+      "path": "src/engine/finetune_trainer.py",
+      "sha256": "a1a95fac9bb50320d1f0305791c02a7502cbf37fa1bb07a7ae3d26d6ffdf54d4",
+      "bytes": 4214
+    },
+    {
+      "path": "src/engine/ssl_trainer.py",
+      "sha256": "876402f43fc643a1f30c617dec6884065fa968dc5c5a788be111cbd956f9110f",
+      "bytes": 22201
+    },
+    {
+      "path": "src/evaluation/bootstrap_stratify.py",
+      "sha256": "753bb7eda56a1983e360bc603497db535beb1405b528f28f8483b6292bf7c606",
+      "bytes": 7492
+    },
+    {
+      "path": "src/models/__init__.py",
+      "sha256": "ff49fade31bad3b6c38406114ede386978ae3dbb57f8a081ee04939e1a3c5f55",
+      "bytes": 748
+    },
+    {
+      "path": "src/models/band_structure_encoder.py",
+      "sha256": "da1c35307a452c7f9d73c732f58ba8d04ba2ffaf976cae47213f22ccaeac5651",
+      "bytes": 10526
+    },
+    {
+      "path": "src/models/losses.py",
+      "sha256": "22f8a3278d7533c258cbd34b79eb00191c3eb24188d4c5abd4e6d842bd81afdb",
+      "bytes": 6158
+    },
+    {
+      "path": "src/utils/__init__.py",
+      "sha256": "5dc01aef05fc94afc75be401b1288b63b8e0f009a93bb12a45b3331dc06b5af4",
+      "bytes": 510
+    },
+    {
+      "path": "src/utils/mc_dropout.py",
+      "sha256": "9e7f11742f09e315cecb8f4aba35c94b78689c131617131aa756ba670339ca6c",
+      "bytes": 5810
+    },
+    {
+      "path": "src/utils/physics_validator.py",
+      "sha256": "1e8aebb2259567b503a85d3a1844244e463a1c50726c5c77bdb0ff6b2287c1b3",
+      "bytes": 21854
+    },
+    {
+      "path": "src/utils/selection_manifest.py",
+      "sha256": "b1029eb333bac27b185a9029ab4ab5ceaf1586ada07165c36583999a822499a2",
+      "bytes": 38193
+    },
+    {
+      "path": "src/utils/visualizer.py",
+      "sha256": "83ff8b28d483039ff5fdc40ad4fb0fa97ae022d36f4747a99a5fdb7ce6eb73b5",
+      "bytes": 6801
+    }
+  ]
+}

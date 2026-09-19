@@ -14,10 +14,12 @@ import argparse
 import json
 import os
 import sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
+from src.utils.selection_manifest import sha256_file, validate_material_ids, validate_task_labels
 
 from src.data.ood_tensor_builder import (
     derive_line_global_disagreement,
@@ -41,7 +43,14 @@ def derive_labels(
     material_ids: np.ndarray,
     manifest: dict,
     metadata_by_id: dict,
+    *,
+    strict: bool = False,
 ) -> dict:
+    if strict:
+        validate_material_ids(np.asarray(material_ids).tolist())
+        validate_material_ids([s['material_id'] for s in manifest.get('samples', [])], name='manifest IDs')
+        if X.ndim != 4 or X.shape[0] != len(material_ids) or X.shape[1] != 2 or X.shape[3] != 3 or not np.all(np.isfinite(X)):
+            raise ValueError('Expected finite ID-aligned (N,2,K,3) tensors')
     samples = {s["material_id"]: s for s in manifest.get("samples", [])}
     n = len(X)
     line_topo = np.full(n, -1, dtype=np.int32)
@@ -51,6 +60,8 @@ def derive_labels(
     for i in range(n):
         mid = str(material_ids[i])
         smp = samples.get(mid)
+        if strict and (smp is None or type(smp.get('metal_feature_inferred')) is not bool):
+            raise ValueError(f'{mid}: missing explicit line-mode crossing evidence')
         crossing = bool(smp.get("metal_feature_inferred", False)) if smp else False
         vbm = X[i, 0, :, 0]
         cbm = X[i, 1, :, 0]
@@ -65,6 +76,8 @@ def derive_labels(
         else:
             is_metal = meta.get("is_metal")
             is_direct = meta.get("is_direct")
+            if strict and any(v is not None and type(v) is not bool for v in (is_metal, is_direct)):
+                raise ValueError(f'{mid}: provider flags must be explicit booleans, not truthy strings')
             provider_type[i] = derive_provider_global_type(
                 is_metal=None if is_metal is None else bool(is_metal),
                 is_direct=None if is_direct is None else bool(is_direct),
@@ -72,20 +85,68 @@ def derive_labels(
         disagreement[i] = derive_line_global_disagreement(
             int(line_topo[i]), int(provider_type[i])
         )
-    return {
+    labels = {
         "line_mode_topology": line_topo,
         "provider_global_electronic_type": provider_type,
         "line_global_disagreement": disagreement,
     }
+    if strict:
+        validate_task_labels({k: v.tolist() for k, v in labels.items()}, np.asarray(material_ids).tolist())
+    return labels
+
+
+def derive_split_sidecars(npz_path, manifest_path, metadata_path, output_dir):
+    """Preparation only: derive both frozen partitions, never used by train-only.
+
+    Full metadata/audit are read here, before training, not by the trainer. Output
+    is a new immutable directory; no existing sidecar or tensor is rewritten.
+    """
+    out = Path(output_dir)
+    if out.exists() and (not out.is_dir() or any(out.iterdir())):
+        raise FileExistsError(f'Refusing nonempty label output: {out}')
+    manifest = json.loads(Path(manifest_path).read_text(encoding='utf-8'))
+    metadata = load_metadata_by_id(metadata_path)
+    partitions = {}
+    with np.load(npz_path, allow_pickle=False) as data:
+        for split in ('train', 'test'):
+            ids = data[f'material_ids_{split}']
+            labels = derive_labels(data[f'X_{split}'], ids, manifest, metadata, strict=True)
+            partitions[split] = dict(material_ids=ids, schema_version=np.array(2), partition=np.array(split), **labels)
+    if set(partitions['train']['material_ids']) & set(partitions['test']['material_ids']):
+        raise ValueError('Frozen train/test IDs overlap')
+    out.mkdir(parents=True, exist_ok=True)
+    report = {'schema_version': 2, 'partitions': {}, 'inputs': {}}
+    for role, path in [('source_tensor', npz_path), ('manifest', manifest_path), ('metadata', metadata_path), ('derivation_code', __file__)]:
+        p = Path(path).resolve()
+        report['inputs'][role] = {'path': str(p), 'bytes': p.stat().st_size, 'sha256': sha256_file(p)}
+    for split, payload in partitions.items():
+        path = out / f'three_task_labels_{split}.npz'
+        with path.open('xb') as f:
+            np.savez_compressed(f, **payload)
+        report['partitions'][split] = {'count': len(payload['material_ids']), 'path': str(path.resolve()),
+                                      'bytes': path.stat().st_size, 'sha256': sha256_file(path)}
+    report['provider_fallback_policy'] = 'Explicit provider-sourced manifest gap_type only when metadata absent; never line-mode substitution'
+    with (out / 'three_task_labels_report.json').open('x', encoding='utf-8') as f:
+        json.dump(report, f, indent=2)
+    return report
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Derive P0 three-task labels")
-    parser.add_argument("--npz", required=True, help="band_tensors_full.npz path")
+    parser.add_argument("--npz", required=True, help="frozen band_tensors_ood_split.npz (default) or legacy full NPZ")
     parser.add_argument("--manifest", required=True, help="ood_split_manifest.json path")
     parser.add_argument("--metadata", required=True, help="aflow_metadata.json path")
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--legacy-full", action="store_true", help="explicit diagnostic-only full-sidecar derivation; output must be new")
     args = parser.parse_args()
+
+    if not args.legacy_full:
+        print(json.dumps(derive_split_sidecars(args.npz, args.manifest, args.metadata, args.output_dir), indent=2))
+        return
+    out = Path(args.output_dir)
+    if out.exists() and (not out.is_dir() or any(out.iterdir())):
+        raise FileExistsError(f'Refusing nonempty label output: {out}')
+    out.mkdir(parents=True, exist_ok=True)
 
     data = np.load(args.npz)
     X = data["X"]

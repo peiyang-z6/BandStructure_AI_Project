@@ -307,6 +307,168 @@ def test_train_only_smoke_freezes_selection_and_reloads_real_weights(tmp_path, m
     assert val_loss == pytest.approx(manifest["best_val_loss"], abs=1e-6)
 
 
+@pytest.fixture(scope="module")
+def native_p3_selection(tmp_path_factory):
+    """Real train/freeze/reload, synthetic train only; no prepare dependency."""
+    directory = tmp_path_factory.mktemp("native-p3-format")
+    data_dir, out = directory / "data", directory / "run"
+    data_dir.mkdir()
+    write_split(data_dir / "p3_train.npz", smoke_only=True)
+    p3.main([*smoke_cli(data_dir, out), "--epochs", "1"])
+    return out
+
+
+def test_native_p3_v1_passes_bridge_but_not_shared_formal(native_p3_selection):
+    from src.utils.selection_manifest import validate_inner_selection_manifest
+    manifest = p3.validate_inner_selection_manifest(str(native_p3_selection))
+    assert manifest["schema_version"] == 1
+    assert manifest["mode"] == "smoke"
+    assert manifest["reload_verification"]["predictions_match"] is True
+    # P3's explicit legacy bridge must never change the shared default.
+    with pytest.raises(RuntimeError, match="legacy"):
+        validate_inner_selection_manifest(str(native_p3_selection))
+
+
+@pytest.fixture
+def p3_selection_copy(tmp_path, native_p3_selection):
+    path = tmp_path / "inner_selection_manifest.json"
+    path.write_bytes((native_p3_selection / path.name).read_bytes())
+    # A genuine accepted baseline, not a hand-written P3-looking envelope.
+    manifest = p3.validate_inner_selection_manifest(str(tmp_path))
+    return manifest, path
+
+
+@pytest.mark.parametrize("mode", ["formal", "smoke"])
+@pytest.mark.parametrize("empty_records", [False, True])
+def test_p3_rejects_p0_v1_with_valid_p3_tags(tmp_path, mode, empty_records):
+    fixture_path = Path(__file__).with_name("test_p0_supervision_contracts.py")
+    spec = importlib.util.spec_from_file_location("p0_tagged_fixture", fixture_path)
+    fixture_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fixture_module)
+    manifest = fixture_module.manifest_fixture(tmp_path, schema=1)
+    manifest.update(experimental=True, mode=mode)
+    if empty_records:
+        manifest.update(model_config={}, inner_split={}, history={}, runtime={})
+    path = tmp_path / "inner_selection_manifest.json"
+    path.write_text(json.dumps(manifest))
+    before = path.read_bytes()
+    with pytest.raises(RuntimeError, match="P3"):
+        p3.validate_inner_selection_manifest(str(tmp_path))
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("field", ["model_config", "inner_split", "history", "runtime"])
+@pytest.mark.parametrize("problem", ["missing", "empty", "null", "list", "string", "bool", "number"])
+def test_p3_requires_nonempty_own_records(p3_selection_copy, field, problem):
+    manifest, path = p3_selection_copy
+    if problem == "missing":
+        del manifest[field]
+    else:
+        manifest[field] = {"empty": {}, "null": None, "list": ["not-a-record"],
+                           "string": "not-a-record", "bool": True, "number": 1}[problem]
+    path.write_text(json.dumps(manifest))
+    before = path.read_bytes()
+    with pytest.raises(RuntimeError, match=rf"P3.*{field}"):
+        p3.validate_inner_selection_manifest(str(path.parent))
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("field", ["model_config", "inner_split", "history"])
+@pytest.mark.parametrize("member,value", [
+    ("path", None), ("path", ""), ("path", "   "), ("path", 7), ("path", []),
+    ("sha256", None), ("sha256", ""), ("sha256", 7), ("sha256", []),
+    ("sha256", "g" * 64), ("sha256", "a" * 63),
+    ("bytes", None), ("bytes", "7"), ("bytes", True), ("bytes", 7.0),
+    ("bytes", 0), ("bytes", -1),
+])
+def test_p3_requires_typed_artifact_records(p3_selection_copy, field, member, value):
+    manifest, path = p3_selection_copy
+    if value is None:
+        del manifest[field][member]
+    else:
+        manifest[field][member] = value
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(RuntimeError, match=rf"P3.*{field}"):
+        p3.validate_inner_selection_manifest(str(path.parent))
+
+
+@pytest.mark.parametrize("member,value", [
+    *[(key, None) for key in ("device", "data_residency", "max_batch_size", "tensorflow",
+                              "optimizer_clipnorm", "preflight", "compiled_train")],
+    ("device", []), ("device", ""), ("device", 1), ("device", "/TPU:0"),
+    ("data_residency", []), ("data_residency", "device"),
+    ("max_batch_size", True), ("max_batch_size", "2"), ("max_batch_size", 2.0),
+    ("max_batch_size", 0), ("max_batch_size", -1),
+    ("tensorflow", []), ("tensorflow", ""), ("tensorflow", 1),
+    ("optimizer_clipnorm", True), ("optimizer_clipnorm", "1"),
+    ("optimizer_clipnorm", 0), ("optimizer_clipnorm", float("nan")),
+    ("optimizer_clipnorm", float("inf")),
+    ("preflight", {}), ("preflight", []), ("compiled_train", {}), ("compiled_train", []),
+])
+def test_p3_requires_typed_runtime_record(p3_selection_copy, member, value):
+    manifest, path = p3_selection_copy
+    if value is None:
+        del manifest["runtime"][member]
+    else:
+        manifest["runtime"][member] = value
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(RuntimeError, match="P3.*runtime"):
+        p3.validate_inner_selection_manifest(str(path.parent))
+
+
+@pytest.mark.parametrize("stage", ["preflight", "compiled_train"])
+@pytest.mark.parametrize("member,value", [
+    *[(key, None) for key in ("prediction_device", "loss_device", "gradient_devices", "gradient_count", "finite")],
+    ("prediction_device", []), ("prediction_device", ""), ("loss_device", 1),
+    ("gradient_devices", []), ("gradient_devices", "CPU"), ("gradient_devices", [1]),
+    ("gradient_devices", [""]), ("gradient_count", True), ("gradient_count", "1"),
+    ("gradient_count", 0), ("gradient_count", 1.0), ("finite", False), ("finite", 1),
+])
+def test_p3_requires_typed_runtime_step_records(p3_selection_copy, stage, member, value):
+    manifest, path = p3_selection_copy
+    if stage == "compiled_train" and member == "finite":
+        member = "finite_checked_in_graph"
+    if value is None:
+        del manifest["runtime"][stage][member]
+    else:
+        manifest["runtime"][stage][member] = value
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(RuntimeError, match=rf"P3.*runtime.*{stage}"):
+        p3.validate_inner_selection_manifest(str(path.parent))
+
+
+@pytest.mark.parametrize("value", [[], {}])
+def test_p3_rejects_container_mode_as_a_format_error(p3_selection_copy, value):
+    manifest, path = p3_selection_copy
+    manifest["mode"] = value
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(RuntimeError, match="P3"):
+        p3.validate_inner_selection_manifest(str(path.parent))
+
+
+@pytest.mark.parametrize("case,schema", [
+    ("classifier", 1), ("wrong_schema", 2), ("bool_schema", True), ("wrong_mode", 1),
+])
+def test_p3_validator_rejects_classifier_manifests(tmp_path, case, schema):
+    # Reuse the genuine P0 gate fixture; these are not trained model artifacts.
+    import importlib.util
+    fixture_path = Path(__file__).with_name("test_p0_supervision_contracts.py")
+    spec = importlib.util.spec_from_file_location("p0_selection_fixture", fixture_path)
+    fixture_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fixture_module)
+    manifest = fixture_module.manifest_fixture(tmp_path, schema=schema)
+    if case != "classifier":
+        # A classifier schema cannot become P3 merely by adding P3-looking keys.
+        mode = "unrecognized" if case == "wrong_mode" else "formal"
+        manifest.update(experimental=True, mode=mode, model_config={},
+                        inner_split={}, history={}, runtime={})
+        (tmp_path / "inner_selection_manifest.json").write_text(json.dumps(manifest))
+    before = (tmp_path / "inner_selection_manifest.json").read_bytes()
+    with pytest.raises(RuntimeError, match="P3"):
+        p3.validate_inner_selection_manifest(str(tmp_path))
+    assert (tmp_path / "inner_selection_manifest.json").read_bytes() == before
+
+
 def test_revoked_completion_during_training_cannot_freeze_selection(tmp_path, monkeypatch):
     data_dir, out = tmp_path / "data", tmp_path / "run"
     data_dir.mkdir()

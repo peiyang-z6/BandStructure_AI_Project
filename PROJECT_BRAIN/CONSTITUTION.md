@@ -1,25 +1,59 @@
 # BandStructure AI Project Constitution
 
-Version: 5.1
-Updated: 2026-09-08
+Version: 6.5
+Updated: 2026-09-14（MCP参考感知与来源绑定修复）
 Status: active project rules
+
+**2026-09-13 开放论文图候选规则（当前）**：批量论文内容只能经明确允许机器获取的官方开放接口采集，并逐条保留许可、文档/图/资产SHA和来源标识；禁止绕过主站的系统下载限制。图注命中、CV框、OCR或Computer Use筛查都只是AI预标注。必须在真人看到标签前冻结完整evaluation抽样框，并按文档ID分组防泄漏。非目标图、缺框图和困难图不得事后静默剔除；应作为抽样框中的reference label结果记录。只有真实独立reviewer逐图给出目标/非目标、参考框及认证绑定后，才能称为金标准或正式评测集。当前300条CC-BY图来自239个PMCID group，正式真人approved仍为0。
+
+**2026-09-13 MCP复核边界规则（当前）**：Computer Use、浏览器自动化、AI Agent操作GUI和AI生成的复核说明均属于AI辅助预审，不能计为独立真人reviewer，也不得产生`approved`、`human_audited=true`、operator authentication或科学资格。本地工作台只允许不可覆盖地记录`needs_more_evidence`/`rejected`；正式批准必须在submission目录外的认证operator registry中由真实独立人员完成，并绑定原始文档、页面/面板、观察与证据SHA。当前3条PRX候选均为AI辅助`needs_more_evidence`，approved=0。
+
+**2026-09-13 MCP-first P2规则与工程验收（当前）**：本地stdio配置可面向Hermes、Claude、Cursor、VS Code、Codex生成，但模板生成、配置读回、健康连接和真实Agent调用必须分级报告。不得将本地stdio宣传为OpenAI Responses远程MCP。上传PDF/图像在配置启用时必须使用独立子进程、最小环境和硬超时；不得继承provider凭据。该边界不等于Windows OS sandbox，不能声称限制峰值内存、文件系统或网络。配置包不得包含key/token/password，必须逐文件SHA绑定。
+
+**2026-09-13 MCP-first P1规则与工程验收（当前）**：AI可以预填真实文档观察和生成稳定候选SHA，但MCP是只读服务，永远不得签发`human_audited=true`、reviewer身份、operator authentication或科学资格。P1候选固定`pending_human`；正式真人集必须由外部认证reviewer对照原页，绑定文档/图像/观察/证据SHA，并由submission目录外的operator registry冻结group/split。正式evaluation门槛仍为200–500条。当前PRX三个面板候选全部`eligible=false`、approved=0。
+
+**2026-09-13 MCP-first P0规则与工程验收（当前）**：MCP 是主要产品与交付面；AI 客户端自身文档视觉/OCR/文字理解是主感知路径。MCP只接收来源绑定的结构化观察，负责分析规划、缺证追问、合同校验、有限解析测量和拒识。本地RapidOCR/PDF几何提取仅作可选fallback。旧60k/MBM/GNN/P2/P3/tkinter作为受保护研究资产或可选后端保留，不得以MCP可调用性补签其科学验收。AI自报感知分、OCR分、调用者人工确认均不得成为物理confidence、OOD或独立真人审计。P0最终定向回归315/315；SDK1.30与Hermes SDK2协议演练通过；这只是P0工程验收，不是图像定量、模型或科学验收。
+
+**2026-09-12 MCP/PDF修复最终状态（当前）**：工程`PASS`仅限本轮修复和已测边界；`PDF-VIS-001-R1`同色文字与`IR-CLIP-001`裁剪标签漏洞已闭合，可见正例保留。最终父级与独审各306项定向回归通过；独审两SDK各126调用/63语义例通过。父级新鲜真实Hermes SDK2为87调用/61检查，论文14/14页、3面板、168片段/7302点、0定量，科学`NOT_ACCEPTED/false`、完整数值重建仍未完成。原301过/5导入失败已归因为混合PYTHONPATH遮蔽，原失败保留；正确普通pytest入口无代码改动全过。125源复审时保持，复审后仅同步状态文档；配置未改。历史FAIL/UNKNOWN、真人0、训练/旧资产/P4门禁保持；本有限窗口结束，不再自动加修或复审。 [最终修复与重测报告](agent_logs/20260912_mcp_pdf_renewed_final.md)。
+
+> 下列按日期保留的旧执行状态仅用于追溯；当前结论以本段为准，不回写历史证据。
+
+**2026-09-11 论文MCP实战已封存：工程FAIL、科学不放行（覆盖下方历史状态）**：唯一限域修复及最终独审结束；剩余`PDF-VIS-001-R1`：同色字/背景不可见文字仍可参与刻度或EF定标，已在两SDK真实MCP复现。260项定向回归及父63调用/21检查通过不能抵消该反例。本文14/14页、3面板、168几何片段/7302点、0定量，完整数值重建未完成；仅交付原图与未定标片段。停止本自动修复窗口，不再沿用旧MCP代码PASS认证新增功能。既有注册配置未改，PDF自动定量禁止作为可靠物理结论；历史UNKNOWN、真人0、训练/旧资产/P4门禁保持。 [最终报告](agent_logs/20260911_prxen_mcp_practical_final.md)。
+
+**2026-09-10 MCP交付最终状态（覆盖下方历史执行状态，不改写历史结果）**：测量/OCR首版已交付，唯一新审`code_passed=true`，原5代码阻断全部闭合、无新产品阻断；165项定向测试及81独立用例在两SDK各通过。历史helper绑定缺失与共享GREEN偏差保留，过程UNKNOWN、无保留总验收false。最终父核exit0，119冻结源保持，代码/示例包CRC与逐文件核验通过，独审证据已归档。**Hermes已注册（19:02续办核验）**：用户要求继续后已在default启用bandstructure；12注册项（8业务工具＋4资源/提示包装）和20次注册层调用通过，新建真实Hermes会话的2次MCP调用及对应返回已读回核验。其他配置与119源文件保持不变；此前取消记录仍保留。当前旧会话未热加载新增工具，新会话已验证可用。 部署细节见[启用记录](agent_logs/20260910_mcp_hermes_enabled.md)。不是完整60k跨模态模型；ANN/预测/校准/真人集/主动DFT仍blocked。本窗口结束，无待回传、不再自动迭代；详见[最终报告](agent_logs/20260910_mcp_delivery_final.md)。
+
+**2026-09-10本窗口最终收尾（当前状态）**：deleg_d78d3b96两项已交接并父核，无本窗口待回传任务，不自动新增循环。联合353独立检查352过/1失败，JIF-L1空白语义证据被上游发布而对应test消费拒绝；正常train分区通过，非训练绕过。TYPE/NUMERIC等仅局部PASS，过程UNKNOWN。K01原记录/原字节回放/A参考仍78；持有O_PATH的B及父侧持有源FD的C参考为0，仅有限可行性，原隔离器与K02–K13未实现/批准。两审查加父回执1041文件已归档(不含归档清单，不复制raw)，R106限定源码不变。未合入候选、未全仓/训练/P4，科学与旧UNKNOWN保留。详见 `PROJECT_BRAIN/agent_logs/20260910_single_review_window_final.md`。
+
+**2026-09-10新授权整改（覆盖旧批次停编状态，不改写历史结果）**：用户明确要求“请继续修复，修复结束后立即开始p4，如需用户选择的时候，就按照默认最优选项选择，不要让用户确认。”现恢复新的原地修复/复审/完整回归，默认最优选择直接执行；修复后直接衔接P4前置合同与实现验证。121基线/106Python已核SHA同上一冻结，六旧对象仅核stat。本轮不覆盖历史、不扩材料、不正式训练、不真实raw/outer/full prepare、不补签；旧UNKNOWN/TDD偏差仍保留。工程修复不冒充科学准入，P4正式校准/主动DFT仍受真实独立calibration及科学证据门禁。详见`PROJECT_BRAIN/agent_logs/20260910_renewed_repair_and_p4.md`。
+
+**v2整仓及只读归因已交接（20260909批次，覆盖下文旧状态）**：完整1951项精确同节点/0排除，1950通过、1个注释layout失败、0错误、0跳过；280旧问题现通过、0新测试失败，106源码/6旧资产记录/23源证据及保护器均核稳。deleg_ae4bbfc2已正式交接，父核315证据项并完成专项归档；有界回放确认私有TemporaryDirectory清理中dir_fd相对data被G按项目CWD误解析，非真实项目目录。但原PID2293两行缺raw args/fd/节点/历史inode，不能用回放对象补签历史，完整历史绑定保持UNKNOWN、review_passed=false，不再等待该子任务。P2的JSON重复键与极短k轴反例、源QA覆盖、P3-L1-R1及TDD流程偏差仍阻断；不新增修复或全仓、不正式训练，P4 NO-GO。读取范围仍仅原v4/30k限定元数据/SHA和既有六源的精确路径/SHA，不开放60k目录或其他材料。详见`PROJECT_BRAIN/agent_logs/20260910_denial_attribution_final.md`。
+
+**追加授权与第二轮父级预检（2026-09-09，覆盖下文旧执行状态）**：用户明确回复“同意两项授权”，允许指定v4/30k旧HDF5只读组名/数量与旧manifest/SHA校验，并单独追加P3-L1/L2两项prepare原地TDD修复及新独审；不扩展P2第三轮，不读取当前60k/outer或能量数组，不改写历史资产、不扩材料、不正式训练。第二轮六路已全部交接，父级预检核10份OWN源码、112份快照/106份Python编译及原JUnit；P3格式桥新独审PASS，prepare两项仍待修后独审。四路最终只读复审与P3限域修复已派`deleg_a21da317`；最终共同源码全仓回归须在P3停止编辑后运行。各子流计数不能相加或当作全仓通过。科学门槛与人工0/BLOCKED不变，P4 NO-GO。详见`PROJECT_BRAIN/agent_logs/20260909_additional_authorization.md`。
+
+**循环1新独审与第二轮限定修复（2026-09-09，覆盖下文旧执行状态）**：六路交接已全部消费；上游/runtime/ANN新独审均FAIL，程序计数7个独立阻断问题。runtime L1–L7、ANN S1/L1/L3/L4仅该层工程局部通过，不能抵消上游raw/anchor缺口或真实认证缺失。P3两补丁已回传，父级核JUnit与11份冻结文件SHA，现做新独审；五异常＋一对照的源语义已独立复核，原包168文件逐SHA匹配，QA需补四项内容指纹。已冻111份代码/治理，第二轮四路小修＋两P3独审进行；最终共同源码回归和修后独审尚未通过。最多两轮后仍失败即报告剩余问题，不自动扩改。人工0/BLOCKED，P0/P1/物理/calibration/跨设备门槛不变，P4 NO-GO；不覆盖历史、不扩材料、不正式训练。详见`PROJECT_BRAIN/agent_logs/20260909_fix_cycle2.md`及`artifacts/reports/remediation_20260909/{p2_fix_cycle2_start,cycle1_reviewed_evidence}/`。
+
+**P2中期回验补注（2026-09-09，不改变规则或5.1授权）**：运行合同与原生HNSW查询的合成CPU制品已父级读回，新图-runtime适配接口已联通；旧缓存不得借此升级来源或池化语义。修复循环1前1,099项CPU通过不替代真实数据、GPU、人工图像审计或独立复审；提交的人工清单合格记录为0，P2科学与P4仍不放行。证据见`artifacts/reports/remediation_20260909/parent_p2_handoff/summary.json`及整改执行台账。
+
+**独立审查更正（2026-09-09，修复循环1）**：P2运行与检索两项独审均FAIL，共13项安全/逻辑缺陷；1,099项常规CPU通过与合成回放只证明先前快照的已测路径，不能抵消独立负例。“接口接通”不等于v3语义/来源/冻结/审核合同验收。当前按上游实际凭据产出、运行门禁、图像/审核三路进行修复；不正式训练、不全量准备、不补签历史来源，P4 NO-GO。修前快照、父级3项RED和责任边界见整改执行台账及`artifacts/reports/remediation_20260909/p2_review_fix_cycle1/`。
+
+本段仅更正验收状态，不改变5.1方向、模型/损失/邻居参数与授权边界。
 
 ## 1. Mission
 
-本项目构建物理约束的晶体能带 AI 流水线。**差异化核心方向**（2026-09-06 起）：
+本项目构建面向 AI Agent 的物理约束能带分析 MCP。**主要方向**（2026-09-13 起）：
 
-> 建立"晶体结构 — 数值能带 — 论文/实验能带图像"的物理约束跨模态模型，用于检索、匹配、可信拒识与主动 DFT 闭环；structure→multi-band Eₙ(k) 预测是其中一个任务，而非全部卖点。
+> AI 工具负责理解原始文档；MCP把能带分析方法、证据需求、可审计计算和诚实拒识固化为跨Agent工具协议，而不是继续以单独GUI应用为主要交付。
 
-具体大方向保持为：
+具体主链为：
 
-1. 从可追溯的数据源下载完整 line-mode E(k)；
-2. 构建固定形状 6D 能带张量与 group-disjoint OOD 划分；
-3. 使用 Masked Band Modeling 进行自监督预训练；
-4. 微调用于带隙回归、三任务分类（line_mode_topology / provider_global_electronic_type / line_global_disagreement）；
-5. 通过原生 tkinter GUI 完成人工标定的 Plot-to-Physics 推理与训练数据回流；
-6. 在现有链路上按 P1→P5 顺序扩展：结构 sidecar 补全（P1）、跨模态检索（P2）、variable multi-band decoder（P3）、校准不确定性 + 主动获取（P4）、外部验证集（P5）。
+1. AI 客户端在原始附件上执行自身文档视觉/OCR和文字理解；
+2. AI 提交带文档ID、页码、面板、轴、刻度、Fermi、曲线和歧义的结构化观察；
+3. MCP先规划和检查证据，缺失/矛盾时提出下一观察问题，不猜测；
+4. 证据齐全后只执行声明范围内的sampled-path解析测量；
+5. 本地OCR/PDF几何解析作为可选fallback，不替代AI主路径或人工审计；
+6. 旧数据、模型、检索和GUI仅在完成独立来源/校准/OOD门禁后作为可选后端接入。
 
-允许系统性修复和兼容性升级，不得改写成与主链无关的独立模块集合。禁止单纯为扩数据量而扩到 100k，禁止从头实现完整 DeepH 类哈密顿量网络——两者都偏离差异化定位。
+允许系统性修复和兼容性升级。禁止把未实现工具、未校准confidence/OOD、模型旧指标或合成图成功包装成MCP完整能力。
 
 ## 2. Canonical Project Root and Protected Assets
 
@@ -44,6 +78,7 @@ Status: active project rules
 
 ```text
 BandStructure_AI_Project/
+├── mcp_server/
 ├── data/{raw,processed}/
 ├── artifacts/{models,checkpoints,reports,logs}/<experiment_id>/
 ├── src/{data,engine,models,utils,vision}/
@@ -159,6 +194,8 @@ pipeline 入口合同：`scripts/run_full_pipeline.py` 必须以脚本方式直�
 
 **执行结果记录（2026-09-09 UTC复核）**：上述seed42受控对照已完成、双方权重冻结及最终预测已核验归档；谱误差点估计改善并不伴随gap/金属诊断改善，跨环境严格逐点等价亦未通过。该记录不变更5.1授权、latest-accepted指针或阶段退出标准，P2/P3仍未科学验收，不放行P4/P5。最终结果与保留失败见 `agent_logs/20260909_P3_controlled_final_results.md`。
 
+**整改中期状态注记（2026-09-09）**：用户已批准修复前序数据、实现和科学验收缺口。当前代码的完整CPU回归1,099项通过，不代表P0–P3科学通过；旧七拆分的seen池问题、P1完整合同unknown/路径问题和真实模型/数据证据仍须分项验收。新三任务formal与P3旧格式兼容分别验证，禁止借legacy兼容补造历史来源或放宽formal门禁。该注记不改变大方向、latest-accepted工程指针、5.1探索性授权和P4/P5退出标准。证据见`agent_logs/20260909_remediation_execution.md`。
+
 ### P1 结构 sidecar 补全
 
 - **不得修改既有 immutable HDF5**；新增只读配对 sidecar，按 material_id 关联。
@@ -184,6 +221,8 @@ pipeline 入口合同：`scripts/run_full_pipeline.py` 必须以脚本方式直�
 
 ### P4 校准不确定性与主动获取
 
+**2026-09-10限域衔接授权**：用户明确要求续修完成后立即开始P4，普通方案默认最优选项。本轮修复/新复审后，可开始合成CPU范围的P4合同和原地实现验证，不再以旧批次“不自动新增修复”阻止本轮。此为正式科学准入前的限域工程工作，不表示P0–P3已科学通过；不取消独立calibration、真实来源、冻结/无泄漏、immutable、不正式训练/全量prepare/真实outer读取和主动DFT执行边界。
+
 - 用深度 ensemble 或异方差头估计不确定性；在独立 calibration split 上做 conformal calibration。
 - 报告 coverage、interval width、ECE/Brier、risk–coverage、错误拒识率。
 - 主动学习 acquisition 组合：校准不确定性、latent-space diversity、source/prototype novelty、预期物理信息增益。
@@ -196,9 +235,9 @@ pipeline 入口合同：`scripts/run_full_pipeline.py` 必须以脚本方式直�
 
 现有 6D 模型继续作为 QA、检索和下游基线；现有 encoder/trainer/report/provenance 机制复用。
 
-## 9. GUI Rules
+## 9. Legacy GUI Rules
 
-- GUI 只使用 `scripts/gui_workbench.py` 的原生 tkinter；不重新引入 Gradio/web GUI。
+- GUI 是保留的本地人工标注工具，不是MCP-first产品入口；如继续使用，只保留 `scripts/gui_workbench.py` 的原生 tkinter。
 - 真实图像的 6D 重建依赖人工标定坐标轴、Fermi、VBM/CBM 与曲线点。
 - 标注使用原图像像素坐标；缩放和平移不得改变标签。
 - Fermi 标注必须参与能量零点校准；反向轴保留正确符号。
@@ -208,7 +247,34 @@ pipeline 入口合同：`scripts/run_full_pipeline.py` 必须以脚本方式直�
 - CV 提取必须输出聚合质量分（detector 置信度仅在权重存在时计入；panel 来源、骨架密度、k 向覆盖、分辨率必须实测）。GUI 提取质量指示灯绿/黄/红，黄/红必须提示人工复核。
 - 脑推理不确定性只能用真实输出信号（softmax 熵、极值峰锐度、gap 合理性）；没有 dropout 层的 eval 路径不得虚构 MC-Dropout 方差。
 
+## 9.1 MCP Human Audit Rules
+
+- AI预填、AI感知分、`human_confirmed`自声明或MCP候选SHA都不是人审认证。
+- `prepare_human_audit_candidate`只能生成`pending_human`记录，不得写审查registry或批准记录。
+- 独立reviewer必须查看原始页面/面板，逐项确认轴、单位、Fermi、连续曲线、路径分段及歧义。
+- operator registry必须位于submission目录外，并冻结review证据SHA及document/group/split分配。
+- 200–500条evaluation记录门槛不得由合成图、AI自审、重复图或未绑定证据填充。
+
+## 9.2 MCP Portability and Isolation Rules
+
+- 本地客户端模板必须使用绝对Python/server路径、stdio、受控环境变量和前台进程；生成不等于安装。
+- 原生客户端状态按`template/generated`、`configured/readback`、`connected`、`agent-called`分层，禁止混称。
+- 上传worker只继承运行所需OS变量；AI provider凭据和其它非必要环境不得进入worker。
+- worker超时、崩溃、非法/超大输出必须fail-closed，不能退回父进程内静默解析。
+- Windows VS Code没有官方stdio sandbox；子进程超时隔离不得命名为OS sandbox。
+- Streamable HTTP、认证、限流和远程OpenAI MCP在实现及独立验证前保持未交付。
+
 ## 10. Documentation and Verification
+
+### 2026-09-14 MCP合同补充
+
+- 隔离PDF续取必须绑定同一父进程不可变结果；过期/重启不允许重算后拼接。进程有界缓存不是OS sandbox。
+- CV候选不具备电子/声子/输运语义。宿主ROI须绑定源SHA、页号、坐标单位和类别；空矢量结果须显式声明位图回退/缺证原因。
+- 新v2允许fermi/vbm/arbitrary参考、稀疏多带和不连续路径；EF未知保持null，缺失不插值。旧GUI/v1要求EF的合同不强加给v2。
+- OCR更正必须保留原文本及来源SHA/坐标单位/更正证据；AI来源的更正和图像导出都不形成独立人工认证。
+- 版本、启动时间和构建SHA只能证明对应进程快照，不能把新进程通过冒充旧会话热加载。工程通过与完整DFT/科学准入分别记录。
+
+### 原有同步要求
 
 结构性修改必须同步：
 

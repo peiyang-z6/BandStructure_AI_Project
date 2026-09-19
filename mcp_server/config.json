@@ -1,0 +1,21 @@
+{
+  "name": "BandStructure",
+  "delivery_version": "2.0.0",
+  "transport": "stdio",
+  "supported_transports": ["stdio", "streamable_http"],
+  "sdk_range": "mcp>=1.30,<2",
+  "python": "3.11",
+  "tool_count": 17,
+  "resource_count": 5,
+  "primary_perception": "ai_client_native_document_vision_ocr",
+  "local_ocr_fallback": "rapidocr-onnxruntime 1.4.4",
+  "upload_worker_isolation": "required at supported stdio launch; 1 GiB worker memory ceiling, bounded pipes, timeout and minimal environment; not a filesystem/network sandbox",
+  "client_templates": ["claude_desktop", "cursor", "vscode", "codex"],
+  "streamable_http": true,
+  "http_authentication": "mandatory single-owner bearer file or RS256 OAuth JWT; exact issuer/audience/subject/scope",
+  "review_workbench": "nonapproving pending-queue helper",
+  "cloud_uploads": false,
+  "historical_assets_enabled": false,
+  "public_reference_sha256": "05730fa7cfb3476c539d8c8f6fbd96a316d83b8a948c80487e85d19342ed4d39",
+  "status": "mcp_first_with_nonapproving_review_boundary_not_scientific_acceptance"
+}

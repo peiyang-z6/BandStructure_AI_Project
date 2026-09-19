@@ -64,3 +64,11 @@ def test_build_crystal_graph_batch_pads_to_max_atoms():
     assert list(batch["n_atoms"]) == [1, 4]
     # padding atom rows are all-zero
     assert np.all(batch["atom_features"][0, 1:] == 0.0)
+
+
+@pytest.mark.parametrize("max_atoms", [1, 50, None])
+def test_crystal_graph_rejects_atom_capacity_overflow(max_atoms):
+    n = 2 if max_atoms == 1 else 51
+    coords = np.random.default_rng(3).random((n, 3))
+    with pytest.raises(ValueError, match="atom.*capacity|max_atoms"):
+        build_crystal_graph(np.eye(3) * 20, ["Si"] * n, coords, max_atoms=max_atoms)
