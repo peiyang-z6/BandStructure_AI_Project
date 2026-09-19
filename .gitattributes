@@ -1,0 +1,4 @@
+# Keep machine-generated fixed assets byte-stable across OS checkouts so their
+# pinned checksums stay valid on Windows, Linux and hosted CI runners.
+# Never let git normalize line endings inside these assets.
+mcp_server/resources/*.json -text

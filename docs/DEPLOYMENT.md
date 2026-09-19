@@ -11,6 +11,21 @@ Linux使用Docker Engine。按[Docker官方文档](https://docs.docker.com/engin
 安装，先确认 docker version 和 docker compose version。Docker访问权限通常等价于
 主机管理员权限；不要为AI容器挂载Docker socket，也不要随意增加docker组成员。
 
+## Linux bare-Python prerequisites / Linux 裸 Python 依赖
+
+The Docker image already installs the OpenCV runtime libraries. If you run the MCP
+server directly with `pip install '.[documents,ocr]'` on Linux (no Docker), install
+the OpenCV X11/GL system libraries first so `import cv2` works:
+
+    sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+      libgl1 libglib2.0-0 libxcb1 libxcb-render0 libxcb-shape0 libxcb-shm0 \
+      libxcb-xfixes0 libxcb-render-util0 libxcb-image0 libxcb-icccm4 \
+      libxcb-keysyms1 libxcb-randr0 libxcb-xkb1 libxkbcommon0 libsm6 libice6 \
+      libxext6 libxrender1 libfontconfig1
+
+Windows 不需要这些系统库（OpenCV/opencv-python 自带 DLL）；Windows 仅为稳定起见，
+仓库用 `.gitattributes` 固定资源字节，避免大小写/行尾差异破坏已固定的 SHA 校验。
+
 ## Local quick start / 本地启动
 
     git clone https://github.com/peiyang-z6/BandStructure_AI_Project.git

@@ -6,7 +6,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 CUDA_VISIBLE_DEVICES=-1 \
     BAND_MCP_UPLOAD_ISOLATION=1 BAND_MCP_STORE_DIR=/data/artifacts \
     BAND_MCP_TOKEN_FILE=/data/private/token
-RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 libglib2.0-0 libxcb1 libxcb-render0 libxcb-shape0 libxcb-shm0 \
+    libxcb-xfixes0 libxcb-render-util0 libxcb-image0 libxcb-icccm4 \
+    libxcb-keysyms1 libxcb-randr0 libxcb-xkb1 libxkbcommon0 libsm6 libice6 \
+    libxext6 libxrender1 libfontconfig1 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 10001 band && useradd -m -u 10001 -g band band \
     && mkdir -p /data /app && chown band:band /data
