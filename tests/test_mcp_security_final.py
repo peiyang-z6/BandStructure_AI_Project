@@ -109,13 +109,17 @@ def test_bounded_worker_output_and_timeout():
 def test_limit_setup_failure_never_continues_to_document_parsing(monkeypatch):
     from mcp_server import upload_worker, resource_limits
 
-    def denied():
+    called = {}
+
+    def denied(limit_bytes=resource_limits.MEMORY_LIMIT_BYTES):
+        called["limit_bytes"] = limit_bytes
         raise OSError("synthetic limit installation failure")
 
     monkeypatch.setattr(resource_limits, "enforce_memory_limit", denied)
     with pytest.raises(SystemExit) as exc:
         upload_worker.main()
     assert exc.value.code == 5
+    assert called["limit_bytes"] == upload_worker.UPLOAD_WORKER_MEMORY_LIMIT_BYTES
 
 
 def test_small_component_filter_does_not_rescan_all_pixels_per_label(monkeypatch):

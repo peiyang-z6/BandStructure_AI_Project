@@ -10,12 +10,14 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+UPLOAD_WORKER_MEMORY_LIMIT_BYTES = 1536 * 1024 * 1024
+
 
 def main() -> None:
     from mcp_server.resource_limits import enforce_memory_limit
 
     try:
-        limits = enforce_memory_limit()
+        limits = enforce_memory_limit(UPLOAD_WORKER_MEMORY_LIMIT_BYTES)
     except (OSError, ValueError, ImportError):
         raise SystemExit(5)
     payload = sys.stdin.buffer.read(20 * 1024 * 1024 + 1)
