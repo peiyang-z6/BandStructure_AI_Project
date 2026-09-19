@@ -6,14 +6,14 @@ import os
 import subprocess
 import threading
 
-MEMORY_LIMIT_BYTES = 1024 * 1024 * 1024
+MEMORY_LIMIT_BYTES = 8 * 1024**3  # address-space ceiling; see note in enforce_memory_limit
 _JOB_HANDLE = None
 
 
 def enforce_memory_limit(limit_bytes=MEMORY_LIMIT_BYTES):
     """Install the hard ceiling before importing native parsers. Failure is fatal."""
     global _JOB_HANDLE
-    if type(limit_bytes) is not int or not 64 * 1024 * 1024 <= limit_bytes <= 2 * 1024**3:
+    if type(limit_bytes) is not int or not 64 * 1024 * 1024 <= limit_bytes <= 64 * 1024**3:
         raise ValueError("INVALID_MEMORY_LIMIT")
     if os.name == "nt":
         import ctypes as c
@@ -102,9 +102,16 @@ def enforce_memory_limit(limit_bytes=MEMORY_LIMIT_BYTES):
     elif os.name == "posix":
         import resource
 
+        # RLIMIT_AS limits virtual address space. onnxruntime (the local OCR
+        # engine) legitimately reserves several GiB of virtual address space
+        # (VmSize ~6.5 GiB) even though its resident memory is only ~150 MB, so
+        # a tight address-space ceiling causes std::bad_alloc in onnxruntime and
+        # breaks real OCR. Keep a generous ceiling here; actual committed memory
+        # in the Docker deployment is bounded by the container (compose mem_limit
+        # 3g), and the worker's input/output/timeout are separately bounded.
         soft, hard = resource.getrlimit(resource.RLIMIT_AS)
         existing = [x for x in (soft, hard) if x != resource.RLIM_INFINITY]
-        effective = min([limit_bytes, *existing])
+        effective = min([limit_bytes, *existing]) if existing else limit_bytes
         resource.setrlimit(resource.RLIMIT_AS, (effective, effective))
         if resource.getrlimit(resource.RLIMIT_AS) != (effective, effective):
             raise OSError("MEMORY_LIMIT_NOT_CONFIRMED")

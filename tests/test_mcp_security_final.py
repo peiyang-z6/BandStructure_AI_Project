@@ -68,7 +68,7 @@ def test_parser_subprocess_reports_enforced_memory_limit():
     )
     assert result["status"] == "ok"
     assert result["resource_limits"]["memory_limit_enforced"] is True
-    assert 128 * 1024 * 1024 <= result["resource_limits"]["memory_limit_bytes"] <= 2 * 1024**3
+    assert 128 * 1024 * 1024 <= result["resource_limits"]["memory_limit_bytes"] <= 64 * 1024**3
 
 
 def test_real_child_allocation_cannot_exceed_small_limit():

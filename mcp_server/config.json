@@ -9,7 +9,7 @@
   "resource_count": 5,
   "primary_perception": "ai_client_native_document_vision_ocr",
   "local_ocr_fallback": "rapidocr-onnxruntime 1.4.4",
-  "upload_worker_isolation": "required at supported stdio launch; 1 GiB worker memory ceiling, bounded pipes, timeout and minimal environment; not a filesystem/network sandbox",
+  "upload_worker_isolation": "required at supported stdio launch; 8 GiB address-space ceiling (onnxruntime reserves several GiB of virtual space), bounded pipes, timeout and minimal environment; not a filesystem/network sandbox",
   "client_templates": ["claude_desktop", "cursor", "vscode", "codex"],
   "streamable_http": true,
   "http_authentication": "mandatory single-owner bearer file or RS256 OAuth JWT; exact issuer/audience/subject/scope",

@@ -73,11 +73,14 @@ independent checking; contract success is not verified chemistry.
   by that command. The store is not a multi-tenant authentication boundary.
 - Two concurrent parser subprocesses, 60/90-second timeouts and bounded pipe reads.
   Supported stdio entry points require isolation. Before native imports, each worker
-  installs a 1 GiB ceiling (Windows Job Object; POSIX RLIMIT_AS). Installation failure
-  refuses parsing. Operator attachment preparation/page counting uses a separately
-  bounded 120-second child. Windows enforcement was tested; other platforms require
-  their own acceptance run. Low-level imported parser functions are trusted-development
-  primitives, not an isolated untrusted-upload interface.
+  installs an address-space ceiling (Windows Job Object; POSIX RLIMIT_AS). The ceiling
+  is generous enough for the local OCR engine (onnxruntime legitimately reserves
+  several GiB of virtual address space while using ~150 MB resident); actual committed
+  memory is capped by the deployment container (compose `mem_limit: 3g`). Installation
+  failure refuses parsing. Operator attachment preparation/page counting uses a
+  separately bounded 120-second child. Windows enforcement was tested; other platforms
+  require their own acceptance run. Low-level imported parser functions are
+  trusted-development primitives, not an isolated untrusted-upload interface.
   Busy requests return `UPLOAD_WORKER_BUSY`. This is **not a filesystem/network
   sandbox**. Unauthenticated or multi-tenant public hosting remains unsupported.
 
