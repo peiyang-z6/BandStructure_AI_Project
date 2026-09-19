@@ -3,13 +3,12 @@ on: [push, pull_request, workflow_dispatch]
 permissions:
   contents: read
 jobs:
-  contracts:
+  contracts-windows:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
         python: ['3.11', '3.12']
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     timeout-minutes: 20
     env:
       PYTHONDONTWRITEBYTECODE: '1'
@@ -21,16 +20,46 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - name: Install OpenCV runtime libraries (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends
-          libgl1 libglib2.0-0 libxcb1 libxcb-render0 libxcb-shape0 libxcb-shm0
-          libxcb-xfixes0 libxcb-render-util0 libxcb-image0 libxcb-icccm4
-          libxcb-keysyms1 libxcb-randr0 libxcb-xkb1 libxkbcommon0 libsm6 libice6
-          libxext6 libxrender1 libfontconfig1
       - run: python -m pip install '.[documents,ocr,test]' build
       - run: python scripts/run_mcp_tests.py
       - run: python -m build
+  contracts-linux:
+    # Run the MCP contract suite inside a pinned Linux Python container with the
+    # OpenCV/GL/X11 system libraries installed. The bare ubuntu-latest runner does
+    # not reproduce a clean Linux environment (its preinstalled image and the
+    # setup-python LD_LIBRARY_PATH can break opencv/onnxruntime import), so the
+    # OCR-integration tests are run in the same controlled container that verified
+    # green locally (Debian python:3.x-slim + these libraries).
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12']
+    runs-on: ubuntu-latest
+    container:
+      image: python:${{ matrix.python }}-slim
+    timeout-minutes: 20
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      CUDA_VISIBLE_DEVICES: '-1'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install OpenCV runtime libraries
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            libgl1 libglib2.0-0 libxcb1 libxcb-render0 libxcb-shape0 libxcb-shm0 \
+            libxcb-xfixes0 libxcb-render-util0 libxcb-image0 libxcb-icccm4 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-xkb1 libxkbcommon0 libsm6 libice6 \
+            libxext6 libxrender1 libfontconfig1
+          rm -rf /var/lib/apt/lists/*
+      - name: Install Python dependencies
+        run: python -m pip install '.[documents,ocr,test]' build
+      - name: Run MCP contract tests
+        run: python scripts/run_mcp_tests.py
+      - name: Build distribution
+        run: python -m build
   docker:
     runs-on: ubuntu-latest
     timeout-minutes: 25
